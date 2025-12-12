@@ -28,6 +28,8 @@
         adjustClonedNode: undefined,
         // Callback to filter style properties to be included in the output
         filterStyles: undefined,
+        // Callback to filter urls to be downloaded and inlined in the output
+        filterUrls: undefined,
     };
 
     const domtoimage = {
@@ -307,6 +309,12 @@
             domtoimage.impl.options.styleCaching = defaultOptions.styleCaching;
         } else {
             domtoimage.impl.options.styleCaching = options.styleCaching;
+        }
+
+        if (typeof options.filterUrls === 'undefined') {
+            domtoimage.impl.options.filterUrls = defaultOptions.filterUrls;
+        } else {
+            domtoimage.impl.options.filterUrls = options.filterUrls;
         }
     }
 
@@ -1093,6 +1101,12 @@
             return Promise.resolve(string)
                 .then(readUrls)
                 .then(function (urls) {
+                    if (!domtoimage.impl.options.filterUrls) return urls;
+                    return urls.filter(function (url) {
+                        return domtoimage.impl.options.filterUrls(url, baseUrl)
+                    });
+                })
+                .then(function (urls) {
                     let done = Promise.resolve(string);
                     urls.forEach(function (url) {
                         done = done.then(function (prefix) {
@@ -1136,6 +1150,10 @@
                 .then(selectWebFontRules)
                 .then(function (rules) {
                     return rules.map(newWebFont);
+                })
+                .then(function (webFonts) {
+                    if (!domtoimage.impl.options.filterFonts) return webFonts;
+                    return webFonts.filter(domtoimage.impl.options.filterFonts)
                 });
 
             function selectWebFontRules(cssRules) {
