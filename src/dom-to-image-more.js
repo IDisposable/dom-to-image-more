@@ -1150,10 +1150,6 @@
                 .then(selectWebFontRules)
                 .then(function (rules) {
                     return rules.map(newWebFont);
-                })
-                .then(function (webFonts) {
-                    if (!domtoimage.impl.options.filterFonts) return webFonts;
-                    return webFonts.filter(domtoimage.impl.options.filterFonts)
                 });
 
             function selectWebFontRules(cssRules) {
