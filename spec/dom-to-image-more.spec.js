@@ -1169,32 +1169,20 @@
         describe('styles', function () {
             it('should compute correct keys', function (done) {
                 this.timeout(30000);
-                let one = Promise.allSettled([
-                    loadTestPage(
-                        'padding/dom-node.html',
-                        'padding/style.css',
-                        'padding/control-image'
-                    ).then((node) => renderToSvg(node, { styleCaching: 'strict' })),
-                ]).then((promises) => promises[0].value);
-                let two = Promise.allSettled([
-                    loadTestPage(
-                        'padding/dom-node.html',
-                        'padding/style.css',
-                        'padding/control-image'
-                    ).then((node) => renderToSvg(node, { styleCaching: 'relaxed' })),
-                ]).then((promises) => promises[0].value);
-
-                Promise.allSettled([one, two])
-                    .then(function (promises) {
-                        const strict = promises[0].value;
-                        const relaxed = promises[1].value;
-                        if (strict !== relaxed) {
-                            console.log(
-                                `\n\nstrict: ${strict}\n\nrelaxed: ${relaxed}\n\n`
-                            );
-                        }
-                        assert.equal(strict, relaxed, 'SVG rendered be same');
-                    })
+                loadTestPage(
+                    'padding/dom-node.html',
+                    'padding/style.css',
+                    'padding/control-image'
+                )
+                    .then(() => renderToSvg(domNode(), { styleCaching: 'strict' }))
+                    .then((strict) =>
+                        renderToSvg(domNode(), { styleCaching: 'relaxed' }).then((relaxed) => {
+                            if (strict !== relaxed) {
+                                console.log(`\n\nstrict: ${strict}\n\nrelaxed: ${relaxed}\n\n`);
+                            }
+                            assert.equal(strict, relaxed, 'SVG rendered be same');
+                        })
+                    )
                     .then(done)
                     .catch(done);
             });
