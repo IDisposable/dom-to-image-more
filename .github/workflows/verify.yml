@@ -26,5 +26,7 @@ jobs:
               run: npm ci --dry-run
             - name: Install dependencies
               run: npm ci
+            - name: Type-check bundled definitions
+              run: npm run test:types
             - name: Run build only
               run: npm run build:ci

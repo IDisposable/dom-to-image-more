@@ -25,12 +25,14 @@
         "karma-mocha-reporter": "^2.2.5",
         "mocha": "^11.7.6",
         "prettier": "^3.8.4",
-        "semver": "^7.8.4"
+        "semver": "^7.8.4",
+        "typescript": "^5.9.3"
     },
     "scripts": {
         "format": "eslint src --fix && prettier --write .",
         "lint": "eslint --max-warnings=0 src && prettier --check .",
         "test": "grunt test --debug",
+        "test:types": "tsc --noEmit --strict --esModuleInterop --lib dom,es2020 test-d/dom-to-image-more.test-d.ts",
         "build": "grunt",
         "build:ci": "grunt ci",
         "beta-version-patch": "npm version $(semver $npm_package_version -i prerelease --preid beta)",

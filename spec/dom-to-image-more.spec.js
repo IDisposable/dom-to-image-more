@@ -1089,6 +1089,34 @@
                         done();
                     });
             });
+
+            it('offscreen helper styles must be applied with Object.assign, not assignment (guards #214/#199)', function () {
+                // The offscreen sandbox iframe / makeImage svg MUST be positioned
+                // with Object.assign(el.style, offscreen). A plain `el.style = {}`
+                // is a silent no-op (style is [PutForwards=cssText] → "[object
+                // Object]" → ignored), which left the sandbox iframe in normal flow
+                // and caused the scrollbar flicker/jerk. This guards against anyone
+                // "simplifying" it back to the broken assignment form.
+                const offscreen = {
+                    position: 'fixed',
+                    left: '-9999px',
+                    visibility: 'hidden',
+                };
+
+                const broken = document.createElement('div');
+                broken.style = offscreen; // the no-op pattern
+                assert.equal(
+                    broken.style.position,
+                    '',
+                    'el.style = {object} must NOT apply styles'
+                );
+
+                const correct = document.createElement('div');
+                Object.assign(correct.style, offscreen); // the fix
+                assert.equal(correct.style.position, 'fixed');
+                assert.equal(correct.style.left, '-9999px');
+                assert.equal(correct.style.visibility, 'hidden');
+            });
         });
 
         describe('web fonts', function () {
@@ -1115,6 +1143,42 @@
                     })
                     .then(done)
                     .catch(done);
+            });
+
+            it('readAll skips stylesheets whose cssRules access throws (cross-origin SecurityError) — issue #161', function (done) {
+                // A cross-origin stylesheet (e.g. accounts.google.com/gsi/style)
+                // throws SecurityError when its cssRules are read. getCssRules has
+                // guarded this with try/catch since the fork (v2.7.1); lock in that
+                // it skips the unreadable sheet and still resolves rather than
+                // letting the SecurityError reject the whole render.
+                function ThrowingSheet() {}
+                Object.defineProperty(ThrowingSheet.prototype, 'cssRules', {
+                    get: function () {
+                        throw new DOMException('blocked', 'SecurityError');
+                    },
+                });
+                const sheet = new ThrowingSheet();
+                sheet.href = 'https://accounts.google.com/gsi/style';
+
+                Object.defineProperty(document, 'styleSheets', {
+                    configurable: true,
+                    get: function () {
+                        return [sheet];
+                    },
+                });
+                try {
+                    // readAll() reads document.styleSheets synchronously here, so
+                    // it captures the throwing sheet before the finally restores.
+                    fontFaces.impl
+                        .readAll()
+                        .then(function (webFonts) {
+                            assert.isArray(webFonts); // resolved, did not throw
+                        })
+                        .then(done)
+                        .catch(done);
+                } finally {
+                    delete document.styleSheets; // restore the native accessor
+                }
             });
 
             function assertSomeIncludesAll(haystacks, needles) {
