@@ -717,11 +717,26 @@
         }
 
         function isInstanceOf(value, typeName) {
-            const window = getWindow(value);
+            const ownerWindow = getWindow(value);
             return (
-                value instanceof window[typeName] ||
-                value instanceof window.parent[typeName]
+                instanceOfIn(value, ownerWindow, typeName) ||
+                instanceOfIn(value, ownerWindow && ownerWindow.parent, typeName)
             );
+        }
+
+        // Cross-realm-safe `value instanceof win[typeName]`:
+        //  - a missing constructor (win[typeName] === undefined) would make a bare
+        //    `instanceof` throw a TypeError ("Right-hand side of 'instanceof' is
+        //    not an object" — see issue #184), so we require an actual function;
+        //  - reading a constructor off a cross-origin parent window throws a
+        //    SecurityError, so any access failure is treated as "not an instance".
+        function instanceOfIn(value, win, typeName) {
+            try {
+                const ctor = win && win[typeName];
+                return typeof ctor === 'function' && value instanceof ctor;
+            } catch (_e) {
+                return false;
+            }
         }
 
         function isShadowRoot(value) {

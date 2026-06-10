@@ -962,6 +962,28 @@
                 assert(uid2.length >= 4);
                 assert.notEqual(uid1, uid2);
             });
+
+            it('isInstanceOf matches real constructors across realms', function () {
+                const div = document.createElement('div');
+                const img = document.createElement('img');
+                assert.isTrue(domtoimage.impl.util.isInstanceOf(div, 'HTMLElement'));
+                assert.isTrue(domtoimage.impl.util.isInstanceOf(img, 'HTMLImageElement'));
+                assert.isFalse(
+                    domtoimage.impl.util.isInstanceOf(div, 'HTMLImageElement')
+                );
+            });
+
+            it('isInstanceOf returns false instead of throwing for a missing constructor (issue #184)', function () {
+                const div = document.createElement('div');
+                // A bare `value instanceof window['NoSuchConstructorXYZ']` throws
+                // "Right-hand side of 'instanceof' is not an object".
+                assert.doesNotThrow(function () {
+                    domtoimage.impl.util.isInstanceOf(div, 'NoSuchConstructorXYZ');
+                });
+                assert.isFalse(
+                    domtoimage.impl.util.isInstanceOf(div, 'NoSuchConstructorXYZ')
+                );
+            });
         });
 
         describe('web fonts', function () {
