@@ -435,6 +435,45 @@ taken:
 
 1. Done!
 
+### Beyond the basics
+
+A few things the cloning step does that aren't obvious from the list above:
+
+- **SVG `<use>` → `<symbol>` inlining.** An `<svg>` often paints an icon with
+  `<use href="#icon">` where the referenced `<symbol>` (or any element) lives **elsewhere
+  on the page** — outside the node you're rendering. That target would never be cloned, so
+  the `<use>` would render nothing. The library detects each `<use>`, resolves its
+  `href`/`xlink:href` against the **live** document, and injects a copy of the referenced
+  element into a hidden `<defs>` in the output so the reference still resolves in the
+  standalone image. The `<use>` element itself is left in place (keeping its own
+  position, size, and inherited `currentColor`). Same-document references only —
+  external sprite files (`sprite.svg#icon`) are left untouched.
+
+- **Default-style optimization (`styleCaching`).** Copying every computed style onto every
+  clone produces enormous SVGs. Instead, the library computes each element's _browser
+  default_ styles (for its tag, in a throwaway sandbox iframe) and emits only the
+  properties that actually differ from the default or the parent. `styleCaching` (`'strict'`
+  by default, or `'relaxed'`) tunes how aggressively those per-tag computations are reused
+  across siblings.
+
+- **Pseudo-elements and form state.** `::before`/`::after` aren't cloned by the DOM, so
+  they're recreated as real elements carrying the pseudo-element's computed style. Current
+  values of form controls (`<input>`, `<textarea>`, checked/selected state) are copied too,
+  since those live in the DOM, not in attributes.
+
+- **Open shadow DOM.** Open shadow roots and their slot-assigned (projected) nodes are
+  walked and flattened into the clone, so web-component content renders.
+
+- **Cross-origin resources.** Web fonts and images are fetched and base64-inlined; for
+  images that block CORS you can route them through a proxy with the [corsImg](#corsimg)
+  option, send cookies with `useCredentials`/`useCredentialsFilters`, or cap slow fetches
+  with `httpTimeout`. A broken **content image** degrades gracefully (see _Things to watch
+  out for_ below).
+
+- **No mutation of your DOM.** All of this happens on a detached clone, and any temporary
+  helpers (the sandbox iframe, wrapper spans for non-element nodes) are tracked and removed
+  in a `finally`, so a render that throws part-way can't leak nodes into your page.
+
 ## Using Typescript
 
 This package ships its own type definitions (`dom-to-image-more.d.ts`), so no separate

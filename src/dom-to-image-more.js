@@ -116,11 +116,14 @@
         domtoimage.impl.copyOptions(options);
         const restorations = [];
 
+        svgRefsToInline = [];
+
         return Promise.resolve(node)
             .then(ensureElement)
             .then(function (clonee) {
                 return cloneNode(clonee, options, null, ownerWindow);
             })
+            .then(injectSvgRefs)
             .then(options.disableEmbedFonts ? Promise.resolve(node) : embedFonts)
             .then(options.disableInlineImages ? Promise.resolve(node) : inlineImages)
             .then(applyOptions)
@@ -155,7 +158,51 @@
         function cleanup() {
             restoreWrappers();
             domtoimage.impl.urlCache = [];
+            svgRefsToInline = [];
             removeSandbox();
+        }
+
+        // Prepend a hidden <svg><defs> holding any out-of-subtree elements that
+        // <use> nodes referenced (issue #215), so the standalone clone is
+        // self-contained. Ids already present in the clone are skipped to avoid
+        // duplicates. Returns the clone unchanged so the chain flows through.
+        function injectSvgRefs(clone) {
+            if (svgRefsToInline.length === 0) {
+                return clone;
+            }
+            const NS = 'http://www.w3.org/2000/svg';
+            const holder = document.createElementNS(NS, 'svg');
+            holder.setAttribute('xmlns', NS);
+            holder.setAttribute('width', '0');
+            holder.setAttribute('height', '0');
+            holder.style.setProperty('position', 'absolute');
+            holder.style.setProperty('width', '0');
+            holder.style.setProperty('height', '0');
+            holder.style.setProperty('overflow', 'hidden');
+            const defs = document.createElementNS(NS, 'defs');
+            holder.appendChild(defs);
+
+            const existingIds = new Set();
+            if (clone.getAttribute('id')) {
+                existingIds.add(clone.getAttribute('id'));
+            }
+            clone.querySelectorAll('[id]').forEach(function (el) {
+                existingIds.add(el.getAttribute('id'));
+            });
+
+            let injected = 0;
+            svgRefsToInline.forEach(function (ref) {
+                if (existingIds.has(ref.id)) {
+                    return; // already in the clone
+                }
+                defs.appendChild(ref.node);
+                injected += 1;
+            });
+
+            if (injected > 0) {
+                clone.insertBefore(holder, clone.firstChild);
+            }
+            return clone;
         }
 
         function restoreWrappers() {
@@ -343,6 +390,12 @@
     }
 
     let sandbox = null;
+
+    // Referenced SVG defs (e.g. a <symbol> a <use> points at) that live OUTSIDE the
+    // rendered subtree. Collected during cloning and injected into the root clone so
+    // the standalone output SVG is self-contained and `<use href="#id">` resolves
+    // (issue #215). Keyed by id; reset per render.
+    let svgRefsToInline = [];
 
     function cloneNode(node, options, parentComputedStyles, ownerWindow) {
         const filter = options.filter;
@@ -625,7 +678,44 @@
                             }
                         });
                     }
+
+                    if (util.isSVGUseElement(clone)) {
+                        collectUseReference(original);
+                    }
                 }
+            }
+
+            // A <use href="#id"> often points at a <symbol>/element defined elsewhere
+            // on the page, OUTSIDE the node being rendered — so that target is never
+            // cloned and the <use> renders nothing. Collect a deep copy of the target
+            // here; it's injected into the root clone later so the reference resolves
+            // in the standalone output. (Same-document fragment refs only; external
+            // sprite files `sprite.svg#id` are left untouched.)
+            function collectUseReference(originalUse) {
+                const href =
+                    originalUse.getAttribute('href') ||
+                    originalUse.getAttributeNS(
+                        'http://www.w3.org/1999/xlink',
+                        'href'
+                    ) ||
+                    originalUse.getAttribute('xlink:href');
+                if (!href || href.charAt(0) !== '#') {
+                    return;
+                }
+                const id = href.slice(1);
+                if (svgRefsToInline.some((ref) => ref.id === id)) {
+                    return; // already collected
+                }
+                const referenced = originalUse.ownerDocument.getElementById(id);
+                if (!referenced) {
+                    return;
+                }
+                const referencedClone = referenced.cloneNode(true);
+                referencedClone.setAttribute(
+                    'xmlns',
+                    'http://www.w3.org/2000/svg'
+                );
+                svgRefsToInline.push({ id: id, node: referencedClone });
             }
         }
     }
@@ -678,6 +768,7 @@
             isShadowSlotElement: isShadowSlotElement,
             isSVGElement: isSVGElement,
             isSVGRectElement: isSVGRectElement,
+            isSVGUseElement: isSVGUseElement,
             isDimensionMissing: isDimensionMissing,
             isInstanceOf: isInstanceOf,
         };
@@ -775,6 +866,10 @@
 
         function isSVGRectElement(value) {
             return isInstanceOf(value, 'SVGRectElement');
+        }
+
+        function isSVGUseElement(value) {
+            return isInstanceOf(value, 'SVGUseElement');
         }
 
         function isDataUrl(url) {

@@ -49,6 +49,71 @@
         });
 
         describe('features', function () {
+            // #215: a <use> that references a <symbol>/element defined OUTSIDE the
+            // rendered subtree would render nothing, because the referenced node was
+            // never cloned. We now collect the target and inject it into the output
+            // SVG so the reference resolves in the standalone image.
+            it('inlines out-of-subtree SVG referenced by <use> (#215)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        const sprite =
+                            '<svg style="display:none" xmlns="http://www.w3.org/2000/svg">' +
+                            '<symbol id="diamond" viewBox="0 0 10 10">' +
+                            '<rect id="symrect" x="2" y="2" width="6" height="6" fill="red"></rect>' +
+                            '</symbol></svg>';
+                        // Sibling of #dom-node, NOT inside it — so it is never cloned.
+                        document
+                            .querySelector('#test-root')
+                            .insertAdjacentHTML('afterbegin', sprite);
+                        domNode().innerHTML =
+                            '<svg width="20" height="20" xmlns="http://www.w3.org/2000/svg">' +
+                            '<use href="#diamond" width="20" height="20"></use></svg>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        // The referenced symbol (and its contents) must be present in
+                        // the standalone output, otherwise <use href="#diamond"> is
+                        // dangling and nothing rasterizes.
+                        assert.include(
+                            decoded,
+                            'id="diamond"',
+                            'referenced <symbol> should be injected into the output'
+                        );
+                        assert.include(
+                            decoded,
+                            'id="symrect"',
+                            "referenced symbol's contents should be injected"
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // #215: when the referenced id already exists inside the rendered
+            // subtree, we must NOT inject a duplicate of it.
+            it('does not duplicate <use> targets already in the subtree (#215)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<svg width="20" height="20" xmlns="http://www.w3.org/2000/svg">' +
+                            '<defs><rect id="inside" x="0" y="0" width="6" height="6" fill="blue"></rect></defs>' +
+                            '<use href="#inside" width="20" height="20"></use></svg>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const occurrences = decoded.split('id="inside"').length - 1;
+                        assert.equal(
+                            occurrences,
+                            1,
+                            'in-subtree target must not be duplicated'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
             it('should handle adjustClonedNode', function (done) {
                 function oncloned(_node, clone, after) {
                     /* jshint unused:false */

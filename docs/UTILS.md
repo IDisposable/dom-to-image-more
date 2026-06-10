@@ -38,6 +38,7 @@ correctly across `<iframe>` boundaries).
 | `isHTMLTextAreaElement(value)`          | an `HTMLTextAreaElement`                                                                                                |
 | `isSVGElement(value)`                   | an `SVGElement`                                                                                                         |
 | `isSVGRectElement(value)`               | an `SVGRectElement`                                                                                                     |
+| `isSVGUseElement(value)`                | an `SVGUseElement` (a `<use>` referencing an element to inline)                                                         |
 | `isShadowRoot(value)`                   | a `ShadowRoot`                                                                                                          |
 | `isInShadowRoot(value)`                 | a node whose root (`getRootNode()`) is a `ShadowRoot`. Safe for `null`/`undefined` and for nodes without `getRootNode`. |
 | `isElementHostForOpenShadowRoot(value)` | an `Element` that hosts an **open** shadow root (`value.shadowRoot !== null`)                                           |
@@ -202,6 +203,7 @@ collides.
 | `isShadowSlotElement`            | type guard | `boolean`                                |
 | `isSVGElement`                   | type guard | `boolean`                                |
 | `isSVGRectElement`               | type guard | `boolean`                                |
+| `isSVGUseElement`                | type guard | `boolean`                                |
 | `isInstanceOf`                   | type guard | `boolean`                                |
 | `isDataUrl`                      | type guard | `boolean`                                |
 | `isDimensionMissing`             | dimensions | `boolean`                                |
