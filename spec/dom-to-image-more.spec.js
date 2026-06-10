@@ -49,6 +49,101 @@
         });
 
         describe('features', function () {
+            // #227 (part 1): UA stylesheets underline `a[href]`. The sandbox builds a
+            // default `<a>` from the tag name alone (no href), so its baseline has no
+            // underline. A page that removes the underline (`a{text-decoration:none}`)
+            // then matched that contextless default, the `none` was dropped, and the
+            // output's UA stylesheet re-applied the underline. Building the default
+            // anchor WITH the href fixes the baseline so the override is preserved.
+            it('preserves a removed underline on a[href] (#227)', function (done) {
+                const style = document.createElement('style');
+                style.id = 'reset-227a';
+                style.textContent = 'a { text-decoration: none; }';
+                document.head.appendChild(style);
+                function cleanup() {
+                    const el = document.getElementById('reset-227a');
+                    if (el) {
+                        el.remove();
+                    }
+                }
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<a id="lnk" href="https://example.com">a link</a>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const anchor = (decoded.match(/<a id="lnk"[^>]*>/) || [])[0];
+                        assert.isString(anchor, 'anchor should be in the output');
+                        // The removed underline must be pinned, otherwise the output
+                        // UA a[href] rule re-underlines the link.
+                        assert.match(
+                            anchor,
+                            /text-decoration(-line)?:\s*none/,
+                            'anchor must pin text-decoration:none so the underline is not re-applied'
+                        );
+                    })
+                    .then(cleanup)
+                    .then(done)
+                    .catch(function (e) {
+                        cleanup();
+                        done(e);
+                    });
+            });
+
+            // #227 (part 2): an element whose UA font-size is relative to its parent
+            // (h1–h6 are N.Nem). When the page overrides it to coincide with both the
+            // context-free sandbox default AND the parent, the diff dropped it — but
+            // the standalone output resolves the UA relative rule against a different
+            // parent font-size, so it diverged. We now always emit font-size for such
+            // elements.
+            it('preserves an overridden font-size on headings (#227)', function (done) {
+                const style = document.createElement('style');
+                style.id = 'reset-227b';
+                // Parent 24px; h2 overridden to 1em (= 24px), which coincides with
+                // the UA-default h2 (1.5em of 16px = 24px) and the parent — the exact
+                // drop case. Without the fix the output h2 re-applies UA 1.5em → 36px.
+                style.textContent =
+                    '#dom-node { font-size: 24px; } #hd { font-size: 1em; }';
+                document.head.appendChild(style);
+                function cleanup() {
+                    const el = document.getElementById('reset-227b');
+                    if (el) {
+                        el.remove();
+                    }
+                }
+                let liveFontSize = '';
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML = '<h2 id="hd">Heading</h2>';
+                        liveFontSize = getComputedStyle(
+                            document.getElementById('hd')
+                        ).getPropertyValue('font-size');
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const h2 = (decoded.match(/<h2 id="hd"[^>]*>/) || [])[0];
+                        assert.isString(h2, 'h2 should be in the output');
+                        assert.match(
+                            h2,
+                            new RegExp(
+                                'font-size:\\s*' + liveFontSize.replace('.', '\\.')
+                            ),
+                            'h2 must pin its overridden font-size (' +
+                                liveFontSize +
+                                ') so the UA 1.5em rule does not re-apply'
+                        );
+                    })
+                    .then(cleanup)
+                    .then(done)
+                    .catch(function (e) {
+                        cleanup();
+                        done(e);
+                    });
+            });
+
             // #203: a CSS reset like Tailwind Preflight (`*{ border-width:0;
             // border-style:solid; border-color:#e5e7eb }`) makes border-style/color
             // differ from the context-free sandbox default (so they're emitted) while

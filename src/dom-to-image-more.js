@@ -1493,6 +1493,10 @@
         }
     }
 
+    // Marks (in a default-style map) that an element's UA font-size is relative to
+    // its parent — see computeStyleForDefaults and issue #227.
+    const UA_RELATIVE_FONT_SIZE_KEY = Symbol('dtim-ua-relative-font-size');
+
     function copyUserComputedStyleFast(
         options,
         sourceElement,
@@ -1524,9 +1528,14 @@
 
             // If the style does not match the default, or it does not match the parent's, set it. We don't know which
             // styles are inherited from the parent and which aren't, so we have to always check both.
+            // The font-size exception (#227): when the element's UA font-size is
+            // relative to its parent, emit it even if it equals both default and
+            // parent here, because the standalone output may resolve that relative UA
+            // rule against a different parent font-size and diverge.
             if (
                 sourceValue !== defaultValue ||
-                (parentComputedStyles && sourceValue !== parentValue)
+                (parentComputedStyles && sourceValue !== parentValue) ||
+                (name === 'font-size' && defaultStyle[UA_RELATIVE_FONT_SIZE_KEY])
             ) {
                 const priority = sourceComputedStyles.getPropertyPriority(name);
                 setStyleProperty(targetStyle, name, sourceValue, priority);
@@ -1618,7 +1627,10 @@
 
     function getDefaultStyle(options, sourceElement) {
         const tagHierarchy = computeTagHierarchy(sourceElement);
-        const tagKey = computeTagKey(tagHierarchy);
+        // The default style depends on UA attribute selectors (see
+        // applyDefaultSelectorAttributes), so fold their signature into the cache
+        // key — otherwise an `<a href>` and a bare `<a>` would share one cache slot.
+        const tagKey = computeTagKey(tagHierarchy) + computeAttributeKey(sourceElement);
         if (tagNameDefaultStyles[tagKey]) {
             return tagNameDefaultStyles[tagKey];
         }
@@ -1631,6 +1643,7 @@
             sandboxWindow.document,
             tagHierarchy
         );
+        applyDefaultSelectorAttributes(defaultElement, sourceElement);
         const defaultStyle = computeStyleForDefaults(sandboxWindow, defaultElement);
         destroyElementHierarchy(defaultElement);
 
@@ -1695,6 +1708,23 @@
                         ? 'auto'
                         : defaultComputedStyle.getPropertyValue(name);
             });
+
+            // Record whether the UA gives this element a font-size that differs from
+            // its inherited (parent) one — i.e. a relative rule like h1–h6 {
+            // font-size: N.Nem }. Such a value must NOT be dropped on the assumption
+            // the output re-derives it: the standalone output's parent font-size can
+            // differ, so the UA's relative rule resolves to a different px there
+            // (issue #227 — an <h2> overridden to its parent's size lost the override
+            // and the UA 1.5em re-applied). Plain elements that simply inherit
+            // font-size are unaffected, so this adds no output for the common case.
+            const parentElement = defaultElement.parentElement;
+            if (parentElement) {
+                const parentFontSize = sandboxWindow
+                    .getComputedStyle(parentElement)
+                    .getPropertyValue('font-size');
+                defaultStyle[UA_RELATIVE_FONT_SIZE_KEY] =
+                    defaultStyle['font-size'] !== parentFontSize;
+            }
             return defaultStyle;
         }
 
@@ -1707,6 +1737,48 @@
                 element = parentElement;
             } while (element && element.tagName !== 'BODY');
         }
+    }
+
+    // UA stylesheets style some elements through attribute selectors, most notably
+    // `a:any-link` / `a[href] { text-decoration: underline; color: ... }`. The
+    // sandbox builds default elements from tag names alone, so a default `<a>` has
+    // NO underline. A page that *removes* the underline (`a { text-decoration: none }`)
+    // then matches that contextless default, the `none` is dropped as "same as
+    // default", and the UA stylesheet re-applies the underline in the standalone
+    // output — the link is underlined again (issue #227). Reflecting the relevant
+    // attribute(s) onto the default element gives it the same UA baseline as the real
+    // element, so a genuine override differs and is preserved.
+    //
+    // Only presence-style attributes that drive UA selectors are mirrored; the value
+    // is copied verbatim where one exists. Keep this list and computeAttributeKey in
+    // lockstep so the default-style cache key stays correct.
+    const DEFAULT_SELECTOR_ATTRIBUTES = ['href'];
+
+    function applyDefaultSelectorAttributes(defaultElement, sourceElement) {
+        if (!sourceElement || !sourceElement.hasAttribute) {
+            return;
+        }
+        DEFAULT_SELECTOR_ATTRIBUTES.forEach(function (attribute) {
+            if (sourceElement.hasAttribute(attribute)) {
+                defaultElement.setAttribute(
+                    attribute,
+                    sourceElement.getAttribute(attribute)
+                );
+            }
+        });
+    }
+
+    function computeAttributeKey(sourceElement) {
+        if (!sourceElement || !sourceElement.hasAttribute) {
+            return '';
+        }
+        return DEFAULT_SELECTOR_ATTRIBUTES.filter(function (attribute) {
+            return sourceElement.hasAttribute(attribute);
+        })
+            .map(function (attribute) {
+                return `[${attribute}]`;
+            })
+            .join('');
     }
 
     function ensureSandboxWindow() {
