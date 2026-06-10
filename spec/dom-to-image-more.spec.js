@@ -49,6 +49,38 @@
         });
 
         describe('features', function () {
+            // #151: an element in a non-HTML/SVG/MathML namespace (created via
+            // createElementNS) is a real Element but has no `.style` object, so the
+            // style copy / image inliner threw "Cannot read properties of undefined".
+            // Such nodes are now skipped for styling and still render.
+            it('does not crash on a styleless foreign-namespace element (#151)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        const foreign = document.createElementNS(
+                            'http://example.com/ns',
+                            'thing'
+                        );
+                        foreign.id = 'foreign';
+                        foreign.textContent = 'x';
+                        assert.isUndefined(
+                            foreign.style,
+                            'precondition: the foreign element has no .style'
+                        );
+                        domNode().appendChild(foreign);
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        // Render resolves (no throw) and the node still appears.
+                        assert.include(
+                            decodeURIComponent(svg),
+                            'id="foreign"',
+                            'the styleless element should still be in the output'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
             // #182: opt-in `pixelRatio` multiplies the rasterized canvas resolution
             // (composes with `scale`), for crisp high-DPI/Retina output.
             it('pixelRatio scales the output canvas resolution (#182)', function (done) {

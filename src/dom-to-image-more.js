@@ -745,6 +745,14 @@
             }
 
             function cloneStyle() {
+                // Some exotic elements are real Elements but expose no `.style`
+                // object — e.g. an element in a non-HTML/SVG/MathML namespace created
+                // via `createElementNS`. There's nothing to copy styles onto, and
+                // touching `.style` would throw "Cannot read properties of undefined"
+                // (issue #151). Skip styling such a node; its structure still clones.
+                if (!clone.style) {
+                    return;
+                }
                 copyStyle(original, clone);
                 fixInheritedVisibility();
 
@@ -1706,6 +1714,11 @@
             });
 
             function inlineCSSProperty(node) {
+                // A styleless element (foreign-namespace; see #151) has no urls to
+                // inline and no `.style` to read — skip rather than crash.
+                if (!node.style) {
+                    return Promise.resolve(node);
+                }
                 // `mask`/`mask-image` (and the `-webkit-` forms) are how SVG icons are
                 // commonly tinted on an element (`mask: url(icon.svg); background:
                 // currentColor`). Like backgrounds, their `url()`s must be inlined or
