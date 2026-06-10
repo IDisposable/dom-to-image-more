@@ -47,6 +47,10 @@ module.exports = function (config) {
     const logicOnly = !!process.env.LOGIC_ONLY;
     // Run Chrome headless on display-less hosts (CI). GitHub Actions sets CI=true.
     const headless = !!process.env.HEADLESS || !!process.env.CI;
+    // Browser to run: `chrome` (default) or `firefox`. See customLaunchers below.
+    // Namespaced (not `BROWSER`, which WSL/Linux desktops set to the default web
+    // browser, e.g. `wslview`, and would otherwise be picked up here).
+    const browser = process.env.KARMA_BROWSER || 'chrome';
     // Device-pixel-ratio for the browser. Pinned to 1 by default so renders match the
     // static reference images regardless of the host's display scaling. Override for
     // ad-hoc high-DPI / fractional-DPR verification, e.g. `DPR=1.25 npm test` (the
@@ -106,7 +110,12 @@ module.exports = function (config) {
         ],
         beforeMiddleware: updateControls ? ['control-updater'] : [],
         autoWatch: true,
-        browsers: ['chrome'],
+        // Which browser to run, `chrome` (default) or `firefox`. Chrome bakes the
+        // control images, so Firefox should run only the OS-robust subset (pair with
+        // LOGIC_ONLY=1 — image tests would otherwise diff against Chrome's renders).
+        // Firefox also exercises the library's `cssText` fast-path (Chrome uses the
+        // sandbox-diff path), so it's a genuine second-engine check.
+        browsers: [browser],
         customLaunchers: {
             chrome: {
                 base: 'Chrome',
@@ -119,6 +128,9 @@ module.exports = function (config) {
                     '--high-dpi-support=1',
                 ].concat(headless ? ['--headless=new', '--disable-gpu'] : []),
                 debug: true,
+            },
+            firefox: {
+                base: headless ? 'FirefoxHeadless' : 'Firefox',
             },
         },
 
