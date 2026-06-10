@@ -1370,7 +1370,20 @@
                 // sheet/dom-node.html only contains a <link> to sheet.css, which
                 // sets #dom-node { background-color: red }. The rendered output must
                 // reflect the externally-loaded rule (not just inline/embedded CSS).
+                this.timeout(5000);
                 loadTestPage('sheet/dom-node.html', 'sheet/style.css')
+                    .then(function () {
+                        // The <link>ed sheet loads asynchronously and loadTestPage
+                        // does not await it; wait until the rule actually applies
+                        // before rendering (cold headless Firefox can be slow to
+                        // fetch it, otherwise the capture races the load).
+                        return waitForCondition(function () {
+                            return (
+                                getComputedStyle(domNode()).backgroundColor ===
+                                'rgb(255, 0, 0)'
+                            );
+                        }, 4000);
+                    })
                     .then(function () {
                         return renderToSvg(domNode());
                     })
@@ -2656,6 +2669,30 @@
                         return document;
                     });
                 });
+        }
+
+        // Poll `predicate` once per animation frame until it returns truthy or the
+        // timeout elapses. Used to await asynchronously-applied state (e.g. an
+        // external <link> stylesheet that loadTestPage does not block on).
+        function waitForCondition(predicate, timeoutMs) {
+            const deadline = Date.now() + (timeoutMs || 2000);
+            return new Promise(function (resolve, reject) {
+                (function poll() {
+                    let satisfied = false;
+                    try {
+                        satisfied = predicate();
+                    } catch (_e) {
+                        satisfied = false;
+                    }
+                    if (satisfied) {
+                        resolve();
+                    } else if (Date.now() > deadline) {
+                        reject(new Error('waitForCondition timed out'));
+                    } else {
+                        requestAnimationFrame(poll);
+                    }
+                })();
+            });
         }
 
         function loadPage() {
