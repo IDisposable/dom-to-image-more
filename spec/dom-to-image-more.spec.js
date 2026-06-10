@@ -938,43 +938,90 @@
                     .catch(done);
             });
 
-            itImage('should handle adjustClonedNode', function (done) {
+            it('should handle adjustClonedNode', function (done) {
                 function oncloned(_node, clone, after) {
                     /* jshint unused:false */
-                    if (!after) {
-                        if (clone.id === 'element') {
-                            clone.style.transform = 'translateY(100px)';
-                        }
+                    if (!after && clone.id === 'element') {
+                        clone.style.transform = 'translateY(100px)';
                     }
                     return clone;
                 }
 
-                loadTestPage(
-                    'eventing/dom-node.html',
-                    'eventing/style.css',
-                    'eventing/control-image'
-                )
-                    .then(() => renderToPng(domNode(), { adjustClonedNode: oncloned }))
-                    .then(check)
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="element" style="width:30px;height:30px;background:red"></div>';
+                        return renderToSvg(domNode(), {
+                            adjustClonedNode: oncloned,
+                        });
+                    })
+                    .then(function (svg) {
+                        const el = (decodeURIComponent(svg).match(
+                            /<div id="element"[^>]*>/
+                        ) || [])[0];
+                        assert.isString(el, 'the element should be in the output');
+                        assert.match(
+                            el,
+                            /transform:\s*translateY\(100px\)/,
+                            'adjustClonedNode must apply the transform to the clone'
+                        );
+                    })
                     .then(done)
                     .catch(done);
             });
 
-            itImage('should handle filterStyles', function (done) {
+            it('should handle filterStyles', function (done) {
                 function filterStyles(_node, propertyName) {
                     /* jshint unused:false */
                     return propertyName !== 'background-color';
                 }
+                // The color must come from a stylesheet (not an inline attribute, which
+                // is cloned verbatim) so the computed-style copy — where filterStyles
+                // applies — is what carries it.
+                const style = document.createElement('style');
+                style.id = 'fs-style';
+                style.textContent =
+                    '#fs { background-color: rgb(1, 2, 3); width: 20px; height: 20px; }';
+                document.head.appendChild(style);
+                function cleanup() {
+                    const el = document.getElementById('fs-style');
+                    if (el) {
+                        el.remove();
+                    }
+                }
 
-                loadTestPage(
-                    'filterStyles/dom-node.html',
-                    'filterStyles/style.css',
-                    'filterStyles/control-image'
-                )
-                    .then(() => renderToPng(domNode(), { filterStyles: filterStyles }))
-                    .then(check)
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML = '<div id="fs"></div>';
+                        return Promise.all([
+                            renderToSvg(domNode()),
+                            renderToSvg(domNode(), { filterStyles: filterStyles }),
+                        ]);
+                    })
+                    .then(function (results) {
+                        const baseline = (decodeURIComponent(results[0]).match(
+                            /<div id="fs"[^>]*>/
+                        ) || [])[0];
+                        const filtered = (decodeURIComponent(results[1]).match(
+                            /<div id="fs"[^>]*>/
+                        ) || [])[0];
+                        assert.include(
+                            baseline,
+                            'background-color: rgb(1, 2, 3)',
+                            'baseline must emit background-color'
+                        );
+                        assert.notInclude(
+                            filtered,
+                            'background-color',
+                            'filterStyles must drop background-color'
+                        );
+                    })
+                    .then(cleanup)
                     .then(done)
-                    .catch(done);
+                    .catch(function (e) {
+                        cleanup();
+                        done(e);
+                    });
             });
 
             it('should clean up wrappers and sandbox when a render fails', function (done) {
@@ -1043,13 +1090,24 @@
                     .catch(done);
             });
 
-            itImage('should handle border', function (done) {
-                loadTestPage(
-                    'border/dom-node.html',
-                    'border/style.css',
-                    'border/control-image'
-                )
-                    .then(renderToPngAndCheck)
+            it('should handle border', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="bd" style="border:3px solid rgb(0,128,0);width:20px;height:20px"></div>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const el = (decodeURIComponent(svg).match(/<div id="bd"[^>]*>/) ||
+                            [])[0];
+                        assert.isString(el, 'element should be in output');
+                        assert.include(
+                            el,
+                            'rgb(0, 128, 0)',
+                            'border color should be captured'
+                        );
+                        assert.include(el, '3px', 'border width should be captured');
+                    })
                     .then(done)
                     .catch(done);
             });
@@ -1114,35 +1172,66 @@
                     .catch(done);
             });
 
-            itImage('should handle "#" in colors and attributes', function (done) {
-                loadTestPage(
-                    'hash/dom-node.html',
-                    'hash/style.css',
-                    'small/control-image'
-                )
-                    .then(renderToPngAndCheck)
+            it('should handle "#" in colors and attributes', function (done) {
+                // A literal `#` in the serialized SVG would truncate the data URI
+                // (it starts a fragment); it must be escaped to %23 and round-trip.
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="ha#sh" title="a#b">text#with#hashes</div>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const body = svg.slice(svg.indexOf(',') + 1);
+                        assert.notInclude(
+                            body,
+                            '#',
+                            'literal # must be escaped so the data URI is not truncated'
+                        );
+                        assert.include(
+                            decodeURIComponent(svg),
+                            'text#with#hashes',
+                            'content with # must round-trip'
+                        );
+                    })
                     .then(done)
                     .catch(done);
             });
 
-            itImage('should render nested svg with broken namespace', function (done) {
-                loadTestPage(
-                    'svg-ns/dom-node.html',
-                    'svg-ns/style.css',
-                    'svg-ns/control-image'
-                )
-                    .then(renderToPngAndCheck)
+            it('should render nested svg with broken namespace', function (done) {
+                // svg/path declare the (wrong) XHTML namespace; the path must still
+                // survive serialization rather than being dropped or throwing.
+                loadTestPage('svg-ns/dom-node.html', 'svg-ns/style.css')
+                    .then(function () {
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        assert.include(
+                            decodeURIComponent(svg),
+                            'M10 10 H 90 V 90 H 10 L 10 10',
+                            'the path data must survive the broken namespace'
+                        );
+                    })
                     .then(done)
                     .catch(done);
             });
 
-            itImage('should render svg <rect> with width and height', function (done) {
-                loadTestPage(
-                    'svg-rect/dom-node.html',
-                    'svg-rect/style.css',
-                    'svg-rect/control-image'
-                )
-                    .then(renderToPngAndCheck)
+            it('should render svg <rect> with width and height', function (done) {
+                loadTestPage('svg-rect/dom-node.html', 'svg-rect/style.css')
+                    .then(function () {
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const rect = (decodeURIComponent(svg).match(/<rect[^>]*\/?>/) ||
+                            [])[0];
+                        assert.isString(rect, '<rect> should be in the output');
+                        assert.match(rect, /width="100"/, 'rect width must be preserved');
+                        assert.match(
+                            rect,
+                            /height="100"/,
+                            'rect height must be preserved'
+                        );
+                    })
                     .then(done)
                     .catch(done);
             });
@@ -1206,7 +1295,7 @@
                     .catch(done);
             });
 
-            itImage('should use node filter', function (done) {
+            it('should use node filter', function (done) {
                 function filter(node) {
                     if (node.classList) {
                         return !node.classList.contains('omit');
@@ -1214,18 +1303,33 @@
                     return true;
                 }
 
-                loadTestPage(
-                    'filter/dom-node.html',
-                    'filter/style.css',
-                    'filter/control-image'
-                )
-                    .then(() => renderToPng(domNode(), { filter: filter }))
-                    .then(check)
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<span id="keep">keep</span>' +
+                            '<span id="drop" class="omit">drop</span>';
+                        return renderToSvg(domNode(), { filter: filter });
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        assert.include(
+                            decoded,
+                            'id="keep"',
+                            'unfiltered node should be kept'
+                        );
+                        assert.notInclude(
+                            decoded,
+                            'id="drop"',
+                            'filtered (.omit) node should be excluded'
+                        );
+                    })
                     .then(done)
                     .catch(done);
             });
 
-            itImage('should not apply node filter to root node', function (done) {
+            it('should not apply node filter to root node', function (done) {
+                // Filter keeps only `.include`; the captured root has no such class,
+                // so this proves the filter is not applied to the root itself.
                 function filter(node) {
                     if (node.classList) {
                         return node.classList.contains('include');
@@ -1233,24 +1337,55 @@
                     return false;
                 }
 
-                loadTestPage(
-                    'filter/dom-node.html',
-                    'filter/style.css',
-                    'filter/control-image'
-                )
-                    .then(() => renderToPng(domNode(), { filter: filter }))
-                    .then(check)
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<span id="inc" class="include">inc</span>' +
+                            '<span id="exc">exc</span>';
+                        return renderToSvg(domNode(), { filter: filter });
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        assert.include(
+                            decoded,
+                            'id="dom-node"',
+                            'the root must render even though the filter rejects it'
+                        );
+                        assert.include(
+                            decoded,
+                            'id="inc"',
+                            'an included child should be kept'
+                        );
+                        assert.notInclude(
+                            decoded,
+                            'id="exc"',
+                            'a non-included child should be excluded'
+                        );
+                    })
                     .then(done)
                     .catch(done);
             });
 
-            itImage('should render with external stylesheet', function (done) {
-                loadTestPage(
-                    'sheet/dom-node.html',
-                    'sheet/style.css',
-                    'sheet/control-image'
-                )
-                    .then(renderToPngAndCheck)
+            it('should apply styles from an external stylesheet', function (done) {
+                // sheet/dom-node.html only contains a <link> to sheet.css, which
+                // sets #dom-node { background-color: red }. The rendered output must
+                // reflect the externally-loaded rule (not just inline/embedded CSS).
+                loadTestPage('sheet/dom-node.html', 'sheet/style.css')
+                    .then(function () {
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const root = (decoded.match(
+                            /<div id="dom-node"[^>]*style="[^"]*"/
+                        ) || [])[0];
+                        assert.isString(root, '#dom-node should be in the output');
+                        assert.match(
+                            root,
+                            /background-color:\s*rgb\(255,\s*0,\s*0\)/,
+                            'external stylesheet rule must be honored'
+                        );
+                    })
                     .then(done)
                     .catch(done);
             });
@@ -1380,26 +1515,47 @@
                     .catch(done);
             });
 
-            itImage('should render bgcolor', function (done) {
-                loadTestPage(
-                    'bgcolor/dom-node.html',
-                    'bgcolor/style.css',
-                    'bgcolor/control-image'
-                )
-                    .then(() => renderToPng(domNode(), { bgcolor: '#ffff00' }))
-                    .then(check)
+            it('should render bgcolor', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="b" style="width:30px;height:20px"></div>';
+                        return domtoimage.toPixelData(document.getElementById('b'), {
+                            bgcolor: '#ffff00',
+                        });
+                    })
+                    .then(function (px) {
+                        // bgcolor fills the canvas behind the transparent content.
+                        const i = (2 * 30 + 2) * 4; // pixel (2,2), width 30
+                        assert.equal(px[i], 255, 'red channel');
+                        assert.equal(px[i + 1], 255, 'green channel');
+                        assert.equal(px[i + 2], 0, 'blue channel');
+                        assert.isAbove(px[i + 3], 200, 'opaque');
+                    })
                     .then(done)
                     .catch(done);
             });
 
-            itImage('should render bgcolor in SVG', function (done) {
-                loadTestPage(
-                    'bgcolor/dom-node.html',
-                    'bgcolor/style.css',
-                    'bgcolor/control-image'
-                )
-                    .then(() => renderToSvg(domNode(), { bgcolor: '#ffff00' }))
-                    .then(check)
+            it('should render bgcolor in SVG', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="b" style="width:30px;height:20px"></div>';
+                        return domtoimage.toSvg(document.getElementById('b'), {
+                            bgcolor: '#ffff00',
+                        });
+                    })
+                    .then(function (svg) {
+                        const root = (decodeURIComponent(svg).match(
+                            /<div id="b"[^>]*>/
+                        ) || [])[0];
+                        assert.isString(root, 'root should be in the output');
+                        assert.match(
+                            root,
+                            /background-color:\s*rgb\(255,\s*255,\s*0\)/,
+                            'bgcolor option must be applied to the root'
+                        );
+                    })
                     .then(done)
                     .catch(done);
             });
@@ -1447,23 +1603,33 @@
                     .catch(done);
             });
 
-            itImage(
-                'should apply width and height options to node copy being rendered',
-                function (done) {
-                    loadTestPage(
-                        'dimensions/dom-node.html',
-                        'dimensions/style.css',
-                        'dimensions/control-image'
-                    )
-                        .then(() => renderToPng(domNode(), { width: 200, height: 200 }))
-                        .then(function (dataUrl) {
-                            return drawDataUrl(dataUrl, { width: 200, height: 200 });
-                        })
-                        .then(compareToControlImage)
-                        .then(done)
-                        .catch(done);
-                }
-            );
+            it('should apply width and height options to the node copy', function (done) {
+                // The width/height options must size the SVG to the requested box,
+                // overriding the element's own 100x100 dimensions.
+                loadTestPage()
+                    .then(function () {
+                        const node = domNode();
+                        node.style.width = '100px';
+                        node.style.height = '100px';
+                        node.style.backgroundColor = 'red';
+                        return renderToSvg(node, { width: 200, height: 200 });
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        assert.match(
+                            decoded,
+                            /<svg[^>]*\swidth="200"/,
+                            'width option must size the SVG'
+                        );
+                        assert.match(
+                            decoded,
+                            /<svg[^>]*\sheight="200"/,
+                            'height option must size the SVG'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
 
             itImage(
                 'should apply style text to node copy being rendered',
@@ -1499,38 +1665,65 @@
                     .catch(done);
             });
 
-            itImage('should combine dimensions and style', function (done) {
-                loadTestPage(
-                    'scale/dom-node.html',
-                    'scale/style.css',
-                    'scale/control-image'
-                )
-                    .then(() =>
-                        renderToPng(domNode(), {
+            it('should combine dimensions and style', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML = '<div id="cd">x</div>';
+                        return renderToSvg(domNode(), {
                             width: 200,
                             height: 200,
                             style: {
                                 'transform': 'scale(2)',
                                 'transform-origin': 'top left',
                             },
-                        })
-                    )
-                    .then(function (dataUrl) {
-                        return drawDataUrl(dataUrl, { width: 200, height: 200 });
+                        });
                     })
-                    .then(compareToControlImage)
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        assert.match(
+                            decoded,
+                            /<svg[^>]*\swidth="200"/,
+                            'width option must size the SVG'
+                        );
+                        assert.match(
+                            decoded,
+                            /<svg[^>]*\sheight="200"/,
+                            'height option must size the SVG'
+                        );
+                        // The style option is applied to the captured root (#dom-node).
+                        const root = (decoded.match(/<div id="dom-node"[^>]*>/) || [])[0];
+                        assert.match(
+                            root,
+                            /transform:\s*scale\(2\)|matrix\(2,/,
+                            'style option must apply the transform to the root'
+                        );
+                    })
                     .then(done)
                     .catch(done);
             });
 
-            itImage('should render svg style attributes', function (done) {
-                loadTestPage(
-                    'svg-styles/dom-node.html',
-                    'svg-styles/style.css',
-                    'svg-styles/control-image'
-                )
-                    .then(renderToSvg)
-                    .then(check)
+            it('should render an HTML <a> (not confused with SVG <a>)', function (done) {
+                // issue #90: an HTML anchor must round-trip with its attribute-selector
+                // styling applied, not be treated as an SVG <a> element.
+                loadTestPage('svg-styles/dom-node.html', 'svg-styles/style.css')
+                    .then(function () {
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const anchor = (decoded.match(/<a [^>]*>/) || [])[0];
+                        assert.isString(anchor, '<a> should be in the output');
+                        assert.include(
+                            anchor,
+                            'href="#dom-node"',
+                            'anchor href must round-trip'
+                        );
+                        assert.match(
+                            anchor,
+                            /color:\s*rgb\(0,\s*0,\s*0\)/,
+                            'attribute-selector color must be applied'
+                        );
+                    })
                     .then(done)
                     .catch(done);
             });
@@ -1548,13 +1741,25 @@
                     .catch(done);
             });
 
-            itImage('should honor zero-padding table elements', function (done) {
-                loadTestPage(
-                    'padding/dom-node.html',
-                    'padding/style.css',
-                    'padding/control-image'
-                )
-                    .then(renderToPngAndCheck)
+            it('should honor zero-padding table elements', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<table style="border-collapse:collapse"><tbody><tr>' +
+                            '<td id="cell" style="padding:0">x</td></tr></tbody></table>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const cell = (decodeURIComponent(svg).match(
+                            /<td id="cell"[^>]*>/
+                        ) || [])[0];
+                        assert.isString(cell, 'cell should be in output');
+                        assert.match(
+                            cell,
+                            /padding:\s*0px|padding-top:\s*0px/,
+                            'zero cell padding must be preserved (UA table padding not re-added)'
+                        );
+                    })
                     .then(done)
                     .catch(done);
             });
@@ -1574,13 +1779,28 @@
                 }
             );
 
-            itImage('should not get fooled by math elements', function (done) {
-                loadTestPage('math/dom-node.html', null, 'math/control-image')
-                    .then(() => renderToPng(domNode(), { width: 500, height: 100 }))
-                    .then(function (dataUrl) {
-                        return drawDataUrl(dataUrl, { width: 500, height: 100 });
+            it('should not get fooled by math elements', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<math id="m"><mrow><mi>x</mi><mo>+</mo><mn>1</mn></mrow></math>';
+                        return renderToSvg(domNode());
                     })
-                    .then(compareToControlImage)
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        // MathML must not break the default-style/ascent-stopper path
+                        // (lowercase 'math'); the render succeeds and structure survives.
+                        assert.include(
+                            decoded,
+                            'id="m"',
+                            'the <math> element should render without error'
+                        );
+                        assert.include(
+                            decoded,
+                            '<mi',
+                            'math children should be preserved'
+                        );
+                    })
                     .then(done)
                     .catch(done);
             });
