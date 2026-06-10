@@ -565,7 +565,7 @@ need to reach into it for testing.
 - **High-DPI / Retina output looks soft, and very large captures can come out partial.**
   By default the output is rasterized at CSS-pixel resolution (1×). On high-DPI displays
   that can look soft when shown at native resolution — pass
-  [pixelRatio](#pixelratio)`: window.devicePixelRatio` for a crisp capture. Browsers also
+  [pixelRatio](#pixelratio): `window.devicePixelRatio` for a crisp capture. Browsers also
   cap canvas size; a capture whose `width × height × scale × pixelRatio` exceeds that cap
   would otherwise yield a **partial or blank** bitmap, so the library clamps the
   multiplier to fit and logs a warning instead (render a smaller region, or lower

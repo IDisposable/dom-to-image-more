@@ -345,6 +345,31 @@
                     .catch(done);
             });
 
+            // ensureShown must reach the non-root SVG path too: a display:none <g> would
+            // throw in getBBox and render blank otherwise (PR #230 review).
+            it('ensureShown reveals a hidden non-root SVG element', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<svg width="50" height="50" xmlns="http://www.w3.org/2000/svg">' +
+                            '<g id="hg" style="display:none">' +
+                            '<rect x="0" y="0" width="20" height="15" fill="red"></rect>' +
+                            '</g></svg>';
+                        return domtoimage.toSvg(document.getElementById('hg'), {
+                            ensureShown: true,
+                        });
+                    })
+                    .then(function (svg) {
+                        assert.match(
+                            svg,
+                            /<svg[^>]*\swidth="\d\d?"/,
+                            'a revealed <g> must be measured (non-zero size), not blank'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
             // #205: rendering a non-root SVG element (`<g>`, `<path>`, …) directly used
             // to reject — the bare element was wrapped in an XHTML <foreignObject> where
             // it can't render. It is now wrapped in a real <svg> framed by its getBBox,

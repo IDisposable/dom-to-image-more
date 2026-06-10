@@ -307,14 +307,19 @@
         // The element's own positioning transform placed it within its *original* svg
         // and is meaningless once extracted, so it is dropped and the bbox `x/y` drives
         // the `viewBox` so the geometry frames exactly. Falls back to a 0 box if getBBox
-        // is unavailable (detached / `display:none`).
+        // is unavailable (detached / `display:none`). `ensureShown` is honored here too,
+        // so a hidden `<g>`/`<path>` root is revealed before measuring (otherwise getBBox
+        // throws on a `display:none` element and the capture comes out blank).
         function makeNonRootSvgDataUri(clone) {
             const SVG_NS = 'http://www.w3.org/2000/svg';
+            const finalizeEnsureShown = revealRootIfHidden(clone);
             let box;
             try {
                 box = node.getBBox();
             } catch (_e) {
                 box = { x: 0, y: 0, width: 0, height: 0 };
+            } finally {
+                finalizeEnsureShown();
             }
 
             clone.removeAttribute('transform');
