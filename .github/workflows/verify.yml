@@ -2,9 +2,9 @@ name: build
 
 on:
     push:
-        branches: [main, v2.x]
+        branches: [main, v2.x, v3.x]
     pull_request:
-        branches: [main, v2.x]
+        branches: [main, v2.x, v3.x]
 
 jobs:
     build:
@@ -21,6 +21,7 @@ jobs:
               with:
                   node-version: ${{ matrix.node-version }}
             - name: Setup Chrome
+              id: setup-chrome
               uses: browser-actions/setup-chrome@v1
             - name: Check dependencies
               run: npm ci --dry-run
@@ -30,3 +31,7 @@ jobs:
               run: npm run test:types
             - name: Run build only
               run: npm run build:ci
+            - name: Run logic tests
+              run: npm run test:logic
+              env:
+                  CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}

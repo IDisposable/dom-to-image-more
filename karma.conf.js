@@ -41,6 +41,12 @@ function controlUpdaterMiddleware() {
 
 module.exports = function (config) {
     const updateControls = !!process.env.UPDATE_CONTROLS;
+    // LOGIC_ONLY skips the OS-font-dependent `compareToControlImage` image tests (tagged
+    // with the spec's `itImage` helper) so the OS-robust logic subset can run anywhere —
+    // notably in CI. The full suite (default) stays the local/WSL gate.
+    const logicOnly = !!process.env.LOGIC_ONLY;
+    // Run Chrome headless on display-less hosts (CI). GitHub Actions sets CI=true.
+    const headless = !!process.env.HEADLESS || !!process.env.CI;
     // Device-pixel-ratio for the browser. Pinned to 1 by default so renders match the
     // static reference images regardless of the host's display scaling. Override for
     // ad-hoc high-DPI / fractional-DPR verification, e.g. `DPR=1.25 npm test` (the
@@ -87,6 +93,8 @@ module.exports = function (config) {
             // Tells the spec to POST renders to the updater middleware instead
             // of asserting against the existing control images.
             updateControls: updateControls,
+            // Tells the spec's `itImage` helper to skip image-comparison tests.
+            logicOnly: logicOnly,
         },
 
         // Register the updater plugin, but only insert it into the request
@@ -109,7 +117,7 @@ module.exports = function (config) {
                     '--window-size=1024,768',
                     `--force-device-scale-factor=${deviceScaleFactor}`,
                     '--high-dpi-support=1',
-                ],
+                ].concat(headless ? ['--headless=new', '--disable-gpu'] : []),
                 debug: true,
             },
         },

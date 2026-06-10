@@ -32,6 +32,7 @@
         "format": "eslint src --fix && prettier --write .",
         "lint": "eslint --max-warnings=0 src && prettier --check .",
         "test": "grunt test --debug",
+        "test:logic": "LOGIC_ONLY=1 grunt test",
         "test:types": "tsc --noEmit --strict --esModuleInterop --lib dom,es2020 test-d/dom-to-image-more.test-d.ts",
         "build": "grunt",
         "build:ci": "grunt ci",

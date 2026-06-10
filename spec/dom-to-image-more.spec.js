@@ -20,6 +20,18 @@
         global.__karma__.config &&
         global.__karma__.config.updateControls
     );
+    // Tests that compare a render against a stored control image are OS-font-dependent
+    // (ClearType vs FreeType, etc.), so they can't run cross-OS in CI. They are declared
+    // with `itImage(...)` instead of `it(...)`; under LOGIC_ONLY the karma config sets
+    // `logicOnly` and they're skipped, leaving the OS-robust logic subset to run anywhere.
+    const LOGIC_ONLY = !!(
+        global.__karma__ &&
+        global.__karma__.config &&
+        global.__karma__.config.logicOnly
+    );
+    function itImage(title, fn) {
+        return (LOGIC_ONLY ? it.skip : it)(title, fn);
+    }
     let currentControlPath = null;
 
     function writeControlImage(dataUrl) {
@@ -901,7 +913,7 @@
                     .catch(done);
             });
 
-            it('should handle adjustClonedNode', function (done) {
+            itImage('should handle adjustClonedNode', function (done) {
                 function oncloned(_node, clone, after) {
                     /* jshint unused:false */
                     if (!after) {
@@ -923,7 +935,7 @@
                     .catch(done);
             });
 
-            it('should handle filterStyles', function (done) {
+            itImage('should handle filterStyles', function (done) {
                 function filterStyles(_node, propertyName) {
                     /* jshint unused:false */
                     return propertyName !== 'background-color';
@@ -982,7 +994,7 @@
                     .catch(done);
             });
 
-            it('should render to svg', function (done) {
+            itImage('should render to svg', function (done) {
                 loadTestPage(
                     'small/dom-node.html',
                     'small/style.css',
@@ -994,7 +1006,7 @@
                     .catch(done);
             });
 
-            it('should render to png', function (done) {
+            itImage('should render to png', function (done) {
                 loadTestPage(
                     'small/dom-node.html',
                     'small/style.css',
@@ -1006,7 +1018,7 @@
                     .catch(done);
             });
 
-            it('should handle border', function (done) {
+            itImage('should handle border', function (done) {
                 loadTestPage(
                     'border/dom-node.html',
                     'border/style.css',
@@ -1017,7 +1029,7 @@
                     .catch(done);
             });
 
-            it('should render to jpeg', function (done) {
+            itImage('should render to jpeg', function (done) {
                 loadTestPage(
                     'small/dom-node.html',
                     'small/style.css',
@@ -1029,19 +1041,22 @@
                     .catch(done);
             });
 
-            it('should use quality parameter when rendering to jpeg', function (done) {
-                loadTestPage(
-                    'small/dom-node.html',
-                    'small/style.css',
-                    'small/control-image-jpeg-low'
-                )
-                    .then(() => renderToJpeg(null, { quality: 0.5 }))
-                    .then(check)
-                    .then(done)
-                    .catch(done);
-            });
+            itImage(
+                'should use quality parameter when rendering to jpeg',
+                function (done) {
+                    loadTestPage(
+                        'small/dom-node.html',
+                        'small/style.css',
+                        'small/control-image-jpeg-low'
+                    )
+                        .then(() => renderToJpeg(null, { quality: 0.5 }))
+                        .then(check)
+                        .then(done)
+                        .catch(done);
+                }
+            );
 
-            it('should render to blob', function (done) {
+            itImage('should render to blob', function (done) {
                 loadTestPage(
                     'small/dom-node.html',
                     'small/style.css',
@@ -1056,7 +1071,7 @@
                     .catch(done);
             });
 
-            it('should render bigger node', function (done) {
+            itImage('should render bigger node', function (done) {
                 loadTestPage(
                     'bigger/dom-node.html',
                     'bigger/style.css',
@@ -1074,7 +1089,7 @@
                     .catch(done);
             });
 
-            it('should handle "#" in colors and attributes', function (done) {
+            itImage('should handle "#" in colors and attributes', function (done) {
                 loadTestPage(
                     'hash/dom-node.html',
                     'hash/style.css',
@@ -1085,7 +1100,7 @@
                     .catch(done);
             });
 
-            it('should render nested svg with broken namespace', function (done) {
+            itImage('should render nested svg with broken namespace', function (done) {
                 loadTestPage(
                     'svg-ns/dom-node.html',
                     'svg-ns/style.css',
@@ -1096,7 +1111,7 @@
                     .catch(done);
             });
 
-            it('should render svg <rect> with width and height', function (done) {
+            itImage('should render svg <rect> with width and height', function (done) {
                 loadTestPage(
                     'svg-rect/dom-node.html',
                     'svg-rect/style.css',
@@ -1107,7 +1122,7 @@
                     .catch(done);
             });
 
-            it('should render whole node when its scrolled', function (done) {
+            itImage('should render whole node when its scrolled', function (done) {
                 let domNode;
                 loadTestPage(
                     'scroll/dom-node.html',
@@ -1166,7 +1181,7 @@
                     .catch(done);
             });
 
-            it('should use node filter', function (done) {
+            itImage('should use node filter', function (done) {
                 function filter(node) {
                     if (node.classList) {
                         return !node.classList.contains('omit');
@@ -1185,7 +1200,7 @@
                     .catch(done);
             });
 
-            it('should not apply node filter to root node', function (done) {
+            itImage('should not apply node filter to root node', function (done) {
                 function filter(node) {
                     if (node.classList) {
                         return node.classList.contains('include');
@@ -1204,7 +1219,7 @@
                     .catch(done);
             });
 
-            it('should render with external stylesheet', function (done) {
+            itImage('should render with external stylesheet', function (done) {
                 loadTestPage(
                     'sheet/dom-node.html',
                     'sheet/style.css',
@@ -1215,7 +1230,7 @@
                     .catch(done);
             });
 
-            it('should render web fonts', function (done) {
+            itImage('should render web fonts', function (done) {
                 this.timeout(5000);
                 loadTestPage(
                     'fonts/dom-node.html',
@@ -1227,7 +1242,7 @@
                     .catch(done);
             });
 
-            it('should not copy web font', function (done) {
+            itImage('should not copy web font', function (done) {
                 this.timeout(5000);
                 loadTestPage(
                     'fonts/dom-node.html',
@@ -1250,7 +1265,7 @@
                     .catch(done);
             });
 
-            it('should render active image in srcset', function (done) {
+            itImage('should render active image in srcset', function (done) {
                 this.timeout(30000);
                 loadTestPage(
                     'srcset/dom-node.html',
@@ -1263,7 +1278,7 @@
                     .catch(done);
             });
 
-            it('should render background images', function (done) {
+            itImage('should render background images', function (done) {
                 loadTestPage(
                     'css-bg/dom-node.html',
                     'css-bg/style.css',
@@ -1274,7 +1289,7 @@
                     .catch(done);
             });
 
-            it('should render iframe of street view', function (done) {
+            itImage('should render iframe of street view', function (done) {
                 this.timeout(60000);
                 loadTestPage(
                     'iframe/street-view.html',
@@ -1340,7 +1355,7 @@
                     .catch(done);
             });
 
-            it('should render bgcolor', function (done) {
+            itImage('should render bgcolor', function (done) {
                 loadTestPage(
                     'bgcolor/dom-node.html',
                     'bgcolor/style.css',
@@ -1352,7 +1367,7 @@
                     .catch(done);
             });
 
-            it('should render bgcolor in SVG', function (done) {
+            itImage('should render bgcolor in SVG', function (done) {
                 loadTestPage(
                     'bgcolor/dom-node.html',
                     'bgcolor/style.css',
@@ -1407,41 +1422,47 @@
                     .catch(done);
             });
 
-            it('should apply width and height options to node copy being rendered', function (done) {
-                loadTestPage(
-                    'dimensions/dom-node.html',
-                    'dimensions/style.css',
-                    'dimensions/control-image'
-                )
-                    .then(() => renderToPng(domNode(), { width: 200, height: 200 }))
-                    .then(function (dataUrl) {
-                        return drawDataUrl(dataUrl, { width: 200, height: 200 });
-                    })
-                    .then(compareToControlImage)
-                    .then(done)
-                    .catch(done);
-            });
-
-            it('should apply style text to node copy being rendered', function (done) {
-                loadTestPage(
-                    'style/dom-node.html',
-                    'style/style.css',
-                    'style/control-image'
-                )
-                    .then(() =>
-                        renderToPng(domNode(), {
-                            style: {
-                                'background-color': 'red',
-                                'transform': 'scale(0.5)',
-                            },
-                        })
+            itImage(
+                'should apply width and height options to node copy being rendered',
+                function (done) {
+                    loadTestPage(
+                        'dimensions/dom-node.html',
+                        'dimensions/style.css',
+                        'dimensions/control-image'
                     )
-                    .then(check)
-                    .then(done)
-                    .catch(done);
-            });
+                        .then(() => renderToPng(domNode(), { width: 200, height: 200 }))
+                        .then(function (dataUrl) {
+                            return drawDataUrl(dataUrl, { width: 200, height: 200 });
+                        })
+                        .then(compareToControlImage)
+                        .then(done)
+                        .catch(done);
+                }
+            );
 
-            it('should apply handle background-clip:text', function (done) {
+            itImage(
+                'should apply style text to node copy being rendered',
+                function (done) {
+                    loadTestPage(
+                        'style/dom-node.html',
+                        'style/style.css',
+                        'style/control-image'
+                    )
+                        .then(() =>
+                            renderToPng(domNode(), {
+                                style: {
+                                    'background-color': 'red',
+                                    'transform': 'scale(0.5)',
+                                },
+                            })
+                        )
+                        .then(check)
+                        .then(done)
+                        .catch(done);
+                }
+            );
+
+            itImage('should apply handle background-clip:text', function (done) {
                 loadTestPage(
                     'background-clip/dom-node.html',
                     'background-clip/style.css',
@@ -1453,7 +1474,7 @@
                     .catch(done);
             });
 
-            it('should combine dimensions and style', function (done) {
+            itImage('should combine dimensions and style', function (done) {
                 loadTestPage(
                     'scale/dom-node.html',
                     'scale/style.css',
@@ -1477,7 +1498,7 @@
                     .catch(done);
             });
 
-            it('should render svg style attributes', function (done) {
+            itImage('should render svg style attributes', function (done) {
                 loadTestPage(
                     'svg-styles/dom-node.html',
                     'svg-styles/style.css',
@@ -1489,7 +1510,7 @@
                     .catch(done);
             });
 
-            it('should render defaults styles when reset', function (done) {
+            itImage('should render defaults styles when reset', function (done) {
                 this.timeout(30000);
                 loadTestPage(
                     'defaultStyles/defaultStyles.html',
@@ -1502,7 +1523,7 @@
                     .catch(done);
             });
 
-            it('should honor zero-padding table elements', function (done) {
+            itImage('should honor zero-padding table elements', function (done) {
                 loadTestPage(
                     'padding/dom-node.html',
                     'padding/style.css',
@@ -1513,19 +1534,22 @@
                     .catch(done);
             });
 
-            it('should render open shadow DOM roots with assigned nodes intact', function (done) {
-                this.timeout(60000);
-                loadTestPage(
-                    'shadow-dom/dom-node.html',
-                    'shadow-dom/styles.css',
-                    'shadow-dom/control-image'
-                )
-                    .then(renderToPngAndCheck)
-                    .then(done)
-                    .catch(done);
-            });
+            itImage(
+                'should render open shadow DOM roots with assigned nodes intact',
+                function (done) {
+                    this.timeout(60000);
+                    loadTestPage(
+                        'shadow-dom/dom-node.html',
+                        'shadow-dom/styles.css',
+                        'shadow-dom/control-image'
+                    )
+                        .then(renderToPngAndCheck)
+                        .then(done)
+                        .catch(done);
+                }
+            );
 
-            it('should not get fooled by math elements', function (done) {
+            itImage('should not get fooled by math elements', function (done) {
                 loadTestPage('math/dom-node.html', null, 'math/control-image')
                     .then(() => renderToPng(domNode(), { width: 500, height: 100 }))
                     .then(function (dataUrl) {
