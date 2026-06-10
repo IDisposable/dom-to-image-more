@@ -677,6 +677,7 @@
             isSVGElement: isSVGElement,
             isSVGRectElement: isSVGRectElement,
             isDimensionMissing: isDimensionMissing,
+            isInstanceOf: isInstanceOf,
         };
 
         function getWindow(node) {
@@ -688,12 +689,13 @@
             );
         }
 
-        function isElementHostForOpenShadowRoot(value) {
-            return isElement(value) && value.shadowRoot !== null;
+        function isInstanceOf(value, typeName) {
+            const window = getWindow(value);
+            return value instanceof window[typeName] || value instanceof window.parent[typeName];
         }
 
         function isShadowRoot(value) {
-            return value instanceof getWindow(value).ShadowRoot;
+            return isInstanceOf(value, 'ShadowRoot');
         }
 
         function isInShadowRoot(value) {
@@ -704,53 +706,57 @@
         }
 
         function isElement(value) {
-            return value instanceof getWindow(value).Element;
+            return isInstanceOf(value, 'Element');
+        }
+
+        function isElementHostForOpenShadowRoot(value) {
+            return isElement(value) && value.shadowRoot !== null;
         }
 
         function isHTMLCanvasElement(value) {
-            return value instanceof getWindow(value).HTMLCanvasElement;
+            return isInstanceOf(value, 'HTMLCanvasElement');
         }
 
         function isHTMLElement(value) {
-            return value instanceof getWindow(value).HTMLElement;
+            return isInstanceOf(value, 'HTMLElement');
         }
 
         function isHTMLImageElement(value) {
-            return value instanceof getWindow(value).HTMLImageElement;
+            return isInstanceOf(value, 'HTMLImageElement');
         }
 
         function isHTMLInputElement(value) {
-            return value instanceof getWindow(value).HTMLInputElement;
+            return isInstanceOf(value, 'HTMLInputElement');
         }
 
         function isHTMLLinkElement(value) {
-            return value instanceof getWindow(value).HTMLLinkElement;
+            return isInstanceOf(value, 'HTMLLinkElement');
         }
 
         function isHTMLScriptElement(value) {
-            return value instanceof getWindow(value).HTMLScriptElement;
+            return isInstanceOf(value, 'HTMLScriptElement');
         }
 
         function isHTMLStyleElement(value) {
-            return value instanceof getWindow(value).HTMLStyleElement;
+            return isInstanceOf(value, 'HTMLStyleElement');
         }
 
         function isHTMLTextAreaElement(value) {
-            return value instanceof getWindow(value).HTMLTextAreaElement;
+            return isInstanceOf(value, 'HTMLTextAreaElement');
         }
 
         function isShadowSlotElement(value) {
             return (
-                isInShadowRoot(value) && value instanceof getWindow(value).HTMLSlotElement
+                isInShadowRoot(value) && isInstanceOf(value, 'HTMLSlotElement')
             );
         }
 
         function isSVGElement(value) {
-            return value instanceof getWindow(value).SVGElement;
+            return isInstanceOf(value, 'SVGElement');
         }
 
         function isSVGRectElement(value) {
-            return value instanceof getWindow(value).SVGRectElement;
+            return isInstanceOf(value, 'SVGRectElement');
         }
 
         function isDataUrl(url) {
