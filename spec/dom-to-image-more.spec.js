@@ -256,6 +256,42 @@
                     .catch(done);
             });
 
+            it('inlines a CSS mask shorthand url (#127)', function (done) {
+                // #127: the `-webkit-mask` / `mask` *shorthand* (not just the
+                // `-image` longhand) carries the url; it must be inlined too or the
+                // masked icon renders blank in the standalone output.
+                this.timeout(15000);
+                const url = '/base/spec/resources/images/image.png';
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<i id="shortmask" style="display:inline-block;width:20px;height:20px;' +
+                            'background-color:red;-webkit-mask:url(' +
+                            url +
+                            ') center / contain no-repeat;mask:url(' +
+                            url +
+                            ') center / contain no-repeat"></i>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const mask = (decoded.match(/<i id="shortmask"[^>]*>/) || [])[0];
+                        assert.isString(mask, 'masked icon should be in the output');
+                        assert.include(
+                            mask,
+                            'data:image',
+                            'the shorthand mask url must be inlined as a data: URL'
+                        );
+                        assert.notInclude(
+                            mask,
+                            'image.png',
+                            'the external mask url must not survive (unfetchable in the output)'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
             // #149: an icon delivered as an `@font-face` glyph via a `::before`
             // pseudo-element. The composition works — the web font is embedded and the
             // pseudo-element's `content` glyph + font-family are captured. (The original
@@ -816,6 +852,95 @@
                     .then(done)
                     .catch(function (e) {
                         cleanupReset();
+                        done(e);
+                    });
+            });
+
+            it('preserves background-clip:text into the output (#24/#26)', function (done) {
+                // background-clip:text (the gradient-text technique) used to be
+                // dropped from the copy. It must survive to the output; the library
+                // also sets the `-webkit-` alias, but engines that alias the two fold
+                // them back to a single `background-clip` on serialization, so accept
+                // either spelling here.
+                const style = document.createElement('style');
+                style.id = 'bgclip-2426';
+                style.textContent =
+                    '#clip { background-clip: text; -webkit-text-fill-color: transparent; }';
+                document.head.appendChild(style);
+
+                function cleanup() {
+                    const el = document.getElementById('bgclip-2426');
+                    if (el) {
+                        el.remove();
+                    }
+                }
+
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML = '<div id="clip">gradient</div>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const clip = (decodeURIComponent(svg).match(
+                            /<div id="clip"[^>]*style="[^"]*"/
+                        ) || [])[0];
+                        assert.isString(clip, '#clip should be in the output');
+                        assert.match(
+                            clip,
+                            /(-webkit-)?background-clip:\s*text/,
+                            'background-clip:text must survive the copy'
+                        );
+                    })
+                    .then(cleanup)
+                    .then(done)
+                    .catch(function (e) {
+                        cleanup();
+                        done(e);
+                    });
+            });
+
+            it('does not duplicate a one-sided border to other sides (#12)', function (done) {
+                // #12 (Firefox): an element with only a left border picked up the
+                // same width on the right. Per-side pinning must keep the other
+                // sides' widths from inheriting the visible side's width.
+                const style = document.createElement('style');
+                style.id = 'border-12';
+                style.textContent =
+                    '#oneside { border-left: 5px solid rgb(0, 128, 0); width: 20px; height: 20px; }';
+                document.head.appendChild(style);
+
+                function cleanup() {
+                    const el = document.getElementById('border-12');
+                    if (el) {
+                        el.remove();
+                    }
+                }
+
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML = '<div id="oneside">x</div>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const el = (decodeURIComponent(svg).match(
+                            /<div id="oneside"[^>]*style="[^"]*"/
+                        ) || [])[0];
+                        assert.isString(el, '#oneside should be in the output');
+                        assert.match(
+                            el,
+                            /border-left-width:\s*5px|border-left:\s*5px/,
+                            'the left border width must be preserved'
+                        );
+                        assert.notMatch(
+                            el,
+                            /border-right-width:\s*5px|border-top-width:\s*5px|border-bottom-width:\s*5px/,
+                            'no other side may inherit the left border width'
+                        );
+                    })
+                    .then(cleanup)
+                    .then(done)
+                    .catch(function (e) {
+                        cleanup();
                         done(e);
                     });
             });
