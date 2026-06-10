@@ -49,6 +49,59 @@
         });
 
         describe('features', function () {
+            // #182: opt-in `pixelRatio` multiplies the rasterized canvas resolution
+            // (composes with `scale`), for crisp high-DPI/Retina output.
+            it('pixelRatio scales the output canvas resolution (#182)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="box" style="width:100px;height:50px;background:red"></div>';
+                        return domtoimage.toCanvas(document.getElementById('box'), {
+                            pixelRatio: 2,
+                        });
+                    })
+                    .then(function (canvas) {
+                        assert.equal(canvas.width, 200, '2x pixelRatio → 2x width');
+                        assert.equal(canvas.height, 100, '2x pixelRatio → 2x height');
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // #182 / #159 / #160: a canvas past the browser size limit silently yields
+            // a partial/blank bitmap. We now clamp the effective scale to fit and warn,
+            // so an oversized capture degrades predictably instead of truncating.
+            it('clamps an oversized canvas and warns (#182)', function (done) {
+                const origWarn = console.warn;
+                let warned = false;
+                console.warn = function () {
+                    warned = true;
+                };
+                function restore() {
+                    console.warn = origWarn;
+                }
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="wide" style="width:17000px;height:20px;background:red"></div>';
+                        return domtoimage.toCanvas(document.getElementById('wide'));
+                    })
+                    .then(function (canvas) {
+                        restore();
+                        assert.isAtMost(
+                            canvas.width,
+                            16384,
+                            'canvas width must be clamped to the limit'
+                        );
+                        assert.isTrue(warned, 'an oversized canvas must warn');
+                    })
+                    .then(done)
+                    .catch(function (e) {
+                        restore();
+                        done(e);
+                    });
+            });
+
             // #168: flex misalignment in exports was attributed to flexbox handling,
             // but it only reproduces at fractional devicePixelRatio (Windows 125% scale
             // or 125% browser zoom) — a sub-pixel re-snapping fidelity limit of the

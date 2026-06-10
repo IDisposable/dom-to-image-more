@@ -341,6 +341,22 @@ below. Defaults to undefined.
 Scale value to be applied on canvas's `ctx.scale()` on both x and y axis. Can be used to
 increase the image quality with higher image size.
 
+#### pixelRatio
+
+Device-pixel-ratio multiplier for the rasterized output (`toPng`, `toJpeg`, `toBlob`,
+`toCanvas`). Defaults to `1` (CSS pixels, unchanged). Set it to `window.devicePixelRatio`
+to get crisp output on high-DPI / Retina displays:
+
+```javascript
+domtoimage.toPng(node, { pixelRatio: window.devicePixelRatio });
+```
+
+It composes with [scale](#scale) (the effective multiplier is `scale × pixelRatio`). If
+the requested canvas (`width × height × scale × pixelRatio`) would exceed the browser's
+canvas size limit, the multiplier is clamped to fit and a warning is logged, so a large
+capture degrades predictably instead of coming out partial or blank (see _Things to watch
+out for_).
+
 ### Alternative Solutions to CORS Policy Issue
 
 Are you facing a [CORS policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS)
@@ -545,6 +561,23 @@ need to reach into it for testing.
   un-hide the node yourself first (note that a `display: none` **ancestor** above the
   captured node is not covered by `ensureShown` — move the node out or reveal the
   ancestor).
+
+- **High-DPI / Retina output looks soft, and very large captures can come out partial.**
+  By default the output is rasterized at CSS-pixel resolution (1×). On high-DPI displays
+  that can look soft when shown at native resolution — pass
+  [pixelRatio](#pixelratio)`: window.devicePixelRatio` for a crisp capture. Browsers also
+  cap canvas size; a capture whose `width × height × scale × pixelRatio` exceeds that cap
+  would otherwise yield a **partial or blank** bitmap, so the library clamps the
+  multiplier to fit and logs a warning instead (render a smaller region, or lower
+  `scale`/`pixelRatio`, if you hit it).
+
+- **At a fractional display scale or browser zoom (e.g. Windows 125%, or 125% page zoom),
+  flex/grid layouts may be shifted by ~1px in the output.** The capture is rasterized from
+  an SVG `<foreignObject>` that re-lays-out the content at 100% zoom / whole CSS pixels,
+  so sub-pixel positions snapped by the live render at a fractional device-pixel-ratio can
+  land on slightly different boundaries. This is an inherent limitation of the approach,
+  not a flex bug (the styles are reproduced faithfully);
+  `pixelRatio: window.devicePixelRatio` can reduce it but won't fully eliminate it.
 
 ## Authors
 

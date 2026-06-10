@@ -42,6 +42,11 @@
         // by its own display:none / opacity:0 (visibility:hidden is always handled).
         // Root-only; per-element hiding inside the subtree is left intact.
         ensureShown: false,
+        // Device-pixel-ratio multiplier for the rasterized canvas output (png/jpeg/
+        // blob/canvas). Defaults to 1 (CSS pixels, unchanged). Set to
+        // window.devicePixelRatio for crisp high-DPI/Retina output. Composes with
+        // `scale` (effective multiplier = scale * pixelRatio).
+        pixelRatio: 1,
     };
 
     const domtoimage = {
@@ -98,6 +103,7 @@
      * @param {Number} options.quality - a Number between 0 and 1 indicating image quality (applicable to JPEG only),
                 defaults to 1.0.
      * @param {Number} options.scale - a Number multiplier to scale up the canvas before rendering to reduce fuzzy images, defaults to 1.0.
+     * @param {Number} options.pixelRatio - device-pixel-ratio multiplier for the rasterized canvas (png/jpeg/blob/canvas); set to window.devicePixelRatio for crisp high-DPI output. Composes with scale. Defaults to 1.0.
      * @param {String} options.imagePlaceholder - dataURL to use as a placeholder for failed images, default behaviour is to fail fast on images we can't fetch
      * @param {Boolean} options.cacheBust - set to true to cache bust by appending the time to the request url
      * @param {String} options.styleCaching - set to 'strict', 'relaxed' to select style caching rules
@@ -486,8 +492,9 @@
         return toSvg(domNode, options)
             .then(util.makeImage)
             .then(function (image) {
-                const scale = typeof options.scale !== 'number' ? 1 : options.scale;
-                const canvas = newCanvas(domNode, scale);
+                const result = newCanvas(domNode);
+                const canvas = result.canvas;
+                const scale = result.scale;
                 const ctx = canvas.getContext('2d');
                 ctx.msImageSmoothingEnabled = false;
                 ctx.imageSmoothingEnabled = false;
@@ -498,7 +505,7 @@
                 return canvas;
             });
 
-        function newCanvas(node, scale) {
+        function newCanvas(node) {
             let width = options.width || util.width(node);
             let height = options.height || util.height(node);
 
@@ -512,6 +519,14 @@
                 height = width / 2.0;
             }
 
+            // Effective resolution multiplier. Both default to 1, so the default
+            // output is unchanged; `pixelRatio: window.devicePixelRatio` opts into
+            // crisp high-DPI output, and `scale` remains an explicit upscale.
+            const requestedScale =
+                (typeof options.scale === 'number' ? options.scale : 1) *
+                (typeof options.pixelRatio === 'number' ? options.pixelRatio : 1);
+            const scale = clampScaleToCanvasLimit(width, height, requestedScale);
+
             const canvas = document.createElement('canvas');
             canvas.width = width * scale;
             canvas.height = height * scale;
@@ -522,8 +537,46 @@
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
             }
 
-            return canvas;
+            return { canvas: canvas, scale: scale };
         }
+    }
+
+    // Browsers cap canvas size; beyond the cap a canvas silently produces a blank or
+    // partial bitmap (issue #182 "incomplete on Retina", and the #159/#160 crash/crop
+    // family). When the requested `width * height * scale` canvas would exceed a
+    // conservative limit, clamp the scale to fit and warn — degrading predictably
+    // instead of truncating silently. Returns the original scale when it already fits.
+    function clampScaleToCanvasLimit(width, height, scale) {
+        // Conservative cross-browser bounds: max single dimension and max area.
+        const MAX_DIMENSION = 16384;
+        const MAX_AREA = MAX_DIMENSION * MAX_DIMENSION;
+
+        if (!(width > 0) || !(height > 0) || !(scale > 0)) {
+            return scale;
+        }
+
+        const limit = Math.min(
+            MAX_DIMENSION / width,
+            MAX_DIMENSION / height,
+            Math.sqrt(MAX_AREA / (width * height))
+        );
+
+        if (scale <= limit) {
+            return scale;
+        }
+
+        console.warn(
+            'dom-to-image-more: the requested ' +
+                Math.round(width * scale) +
+                '×' +
+                Math.round(height * scale) +
+                ' canvas exceeds the browser limit; clamping the effective scale from ' +
+                scale +
+                ' to ' +
+                limit +
+                '. Capture detail may be reduced — render a smaller region or lower scale/pixelRatio.'
+        );
+        return limit;
     }
 
     let sandbox = null;

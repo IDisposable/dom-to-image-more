@@ -41,6 +41,12 @@ function controlUpdaterMiddleware() {
 
 module.exports = function (config) {
     const updateControls = !!process.env.UPDATE_CONTROLS;
+    // Device-pixel-ratio for the browser. Pinned to 1 by default so renders match the
+    // static reference images regardless of the host's display scaling. Override for
+    // ad-hoc high-DPI / fractional-DPR verification, e.g. `DPR=1.25 npm test` (the
+    // image-comparison tests will then differ from the 1x controls — regenerate with
+    // UPDATE_CONTROLS=1 at that DPR if you intend to re-baseline).
+    const deviceScaleFactor = process.env.DPR || '1';
 
     config.set({
         basePath: '',
@@ -101,7 +107,7 @@ module.exports = function (config) {
                 flags: [
                     '--no-sandbox',
                     '--window-size=1024,768',
-                    '--force-device-scale-factor=1',
+                    `--force-device-scale-factor=${deviceScaleFactor}`,
                     '--high-dpi-support=1',
                 ],
                 debug: true,
