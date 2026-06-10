@@ -2,6 +2,17 @@
     * {
         box-sizing: border-box;
     }
+
+    /* Always reserve the vertical scrollbar gutter so the viewport width stays
+       constant whether or not the page overflows. The harness injects each
+       render's clone into #cloned-node between renders, which can tip the page
+       into a scrollbar mid-test; without a reserved gutter that shifts the
+       measured node width by ~15px and makes size-dependent computed styles
+       (inline-size, transform-origin, perspective-origin) differ between
+       otherwise-identical renders (breaks "should compute correct keys"). */
+    html {
+        overflow-y: scroll;
+    }
 </style>
 
 <style id="style"></style>

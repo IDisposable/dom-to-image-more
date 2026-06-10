@@ -10,9 +10,9 @@
 
 The 3.x release branch included some breaking changes in the very infrequently used
 ability to configure some utility methods used in this internal processing of
-dom-to-image-more. As browsers have matured, many of the hacks we're accumulated over the
+dom-to-image-more. As browsers have matured, many of the hacks we've accumulated over the
 years are not needed, or better ways have been found to handle some edge-cases. With the
-help of folks like @meche-gh, in #99 we're stripping out the following members:
+help of folks like @meche-gh, in #99 we removed the following members:
 
 - `.mimes` - was the not-very-comprehensive list of mime types used to handle inlining
   things
@@ -22,7 +22,7 @@ help of folks like @meche-gh, in #99 we're stripping out the following members:
 - `.dataAsUrl` - was a method to reassemble a `data:` URI from a Base64 representation and
   mime type
 
-The 3.x release branch should also fix more node compatibility and `iframe` issues.
+The 3.x release branch also fixed more node compatibility and `iframe` issues.
 
 ## What is it
 
@@ -157,6 +157,8 @@ const blob = domtoimage.toBlob(wrapper, { adjustClonedNode: adjustClone });
 ---
 
 _All the functions under `impl` are not public API and are exposed only for unit testing._
+_The `impl` surface is described in [docs/IMPL.md](docs/IMPL.md) and its `impl.util`
+helpers are catalogued in [docs/UTILS.md](docs/UTILS.md)._
 
 ---
 
@@ -170,14 +172,14 @@ on the root node.
 
 #### filterStyles
 
-A function taking style propertie name as argument. Should return true if passed propertie
-should be included in the output
+A function taking the source node and a style property name as arguments. Should return
+true if the passed property should be included in the output.
 
 Sample use:
 
 ```javascript
 filterStyles(node, propertyName) {
-    return !propertyName.startssWith('--'); // to filter out CSS variables
+    return !propertyName.startsWith('--'); // to filter out CSS variables
 }
 ```
 
@@ -256,10 +258,45 @@ SVGs that reference the original image files, so they my break if a referenced U
 This is always safe to use when generating a PNG/JPG file because the entire SVG image is
 rendered.
 
-#### useCredentialFeatures
+#### styleCaching
 
-Allows optionally setting the `useCredentials` option if the resource matches a pattern in
-the `useCredentialFilters` array.
+Selects how computed-style lookups are cached while cloning, as a speed/accuracy
+trade-off. Accepts `'strict'` (cache keyed on the full tag-ancestry path — most accurate)
+or `'relaxed'` (cache keyed on only the element and its nearest ascent-stopping ancestor —
+fewer cache misses, faster). Defaults to `'strict'`.
+
+#### disableEmbedFonts
+
+Set to true to skip discovering and embedding `@font-face` web fonts into the output.
+Defaults to false (fonts are embedded).
+
+#### httpTimeout
+
+Timeout in milliseconds for the XHR requests used to fetch external resources (images,
+fonts). On timeout the `imagePlaceholder` is used if set, otherwise the request fails.
+Defaults to 30000 (30 seconds).
+
+#### useCredentials
+
+Set to true to send authentication credentials (cookies, HTTP auth) with cross-origin
+(CORS) requests for external resources, i.e. sets `withCredentials` on the XHR and
+`crossOrigin = 'use-credentials'` on images. Defaults to false.
+
+#### useCredentialsFilters
+
+An array of patterns; when non-empty, `useCredentials` is enabled automatically only for
+URLs that match one of the patterns (each is used with `String.prototype.search`). Lets
+you scope credentialed requests to specific hosts. Defaults to `[]`.
+
+#### corsImg
+
+Configuration for routing cross-origin image requests through a proxy to work around
+[CORS](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS) restrictions. An object
+with `url` (the proxy endpoint, where the token `#{cors}` is replaced by the target URL),
+optional `method` (`'GET'` or `'POST'`), optional `headers`, and optional `data` (request
+body, with `#{cors}` substituted in any string values). See
+[Alternative Solutions to CORS Policy Issue](#alternative-solutions-to-cors-policy-issue)
+below. Defaults to undefined.
 
 #### scale
 
@@ -378,17 +415,29 @@ taken:
 
 ## Using Typescript
 
-1. Use original `dom-to-image` type definition
-   `npm install @types/dom-to-image --save-dev`
+This package ships its own type definitions (`dom-to-image-more.d.ts`), so no separate
+`@types/...` install is needed. Just import and use it:
 
-1. Create dom-to-image-more type definition (`dom-to-image-more.d.ts`)
+```typescript
+import domtoimage, { Options } from 'dom-to-image-more';
 
-```javascript
-declare module 'dom-to-image-more' {
-    import domToImage = require('dom-to-image-more');
-    export = domToImage;
-}
+const node = document.getElementById('my-node')!;
+const options: Options = { quality: 0.95, styleCaching: 'relaxed' };
+
+domtoimage.toPng(node, options).then((dataUrl: string) => {
+    /* ... */
+});
 ```
+
+The bundled types cover every rendering option documented above (including fork-specific
+ones such as `adjustClonedNode`, `filterStyles`, `styleCaching`, `corsImg`,
+`useCredentials`/`useCredentialsFilters`, `httpTimeout`, and `disableEmbedFonts`). The
+default import works with `esModuleInterop` enabled; otherwise use
+`import domtoimage = require('dom-to-image-more');`.
+
+The `impl` member is intentionally typed as `unknown`, since it is an internal surface
+that may change between releases and should not be depended on; cast it explicitly if you
+need to reach into it for testing.
 
 ## Things to watch out for
 
@@ -412,7 +461,7 @@ DOLCIMASCOLO (packaging), Zee (ZM) @zm-cttae (many major updates), Joshua Walsh
 (shadow slot fix), David Burns @davidburns573 and Yujia Cheng @YujiaCheng1996 (font copy
 optional), Julien Dorra @juliendorra (documentation), Sean Zhang @SeanZhang-eaton (regex
 fixes), Ludovic Bouges @ludovic (style property filter), Roland Ma @RolandMa1986 (URL
-regex)", Kasim Tan @kasimtan
+regex)", Kasim Tan @kasimtan, Matthias Zach @matthiaszach (iframe fixes)
 
 ## License
 

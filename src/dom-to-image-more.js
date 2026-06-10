@@ -50,7 +50,7 @@
             inliner: inliner,
             urlCache: [],
             options: {},
-            copyOptions: copyOptions
+            copyOptions: copyOptions,
         },
     };
 
@@ -472,6 +472,7 @@
             }
 
             return Promise.resolve()
+                .then(decodeSourceImage)
                 .then(cloneStyle)
                 .then(clonePseudoElements)
                 .then(copyUserInput)
@@ -481,20 +482,46 @@
                     return clone;
                 });
 
+            // An <img> contributes its height from the loaded bitmap's aspect ratio.
+            // If the source image hasn't decoded yet (e.g. loading="lazy", or simply
+            // not yet loaded), its computed height is ~0, so cloneStyle would copy a
+            // collapsed box and the picture drops out of the capture. Forcing the
+            // decode first makes the dimensions real and resolves currentSrc for
+            // srcset/sizes images, so the capture is deterministic regardless of when
+            // the source happened to load.
+            function decodeSourceImage() {
+                if (
+                    !util.isHTMLImageElement(original) ||
+                    typeof original.decode !== 'function'
+                ) {
+                    return undefined;
+                }
+
+                if (original.complete && original.naturalWidth > 0) {
+                    return undefined;
+                }
+
+                return original.decode().catch(function () {
+                    // Broken or blocked image: nothing to wait for, proceed with
+                    // whatever dimensions/source we can read below.
+                });
+            }
+
             function fixResponsiveImages() {
-                if (util.isHTMLImageElement(clone))
-                {
-                    // Remove lazy-loading and responsive attributes
-                    clone.removeAttribute('loading');
+                if (!util.isHTMLImageElement(clone)) {
+                    return;
+                }
 
-                    // If the original had srcset or sizes, set src to the resolved image
-                    if (original.srcset || original.sizes) {
-                        clone.removeAttribute('srcset');
-                        clone.removeAttribute('sizes');
+                // Remove lazy-loading and responsive attributes
+                clone.removeAttribute('loading');
 
-                        // Use currentSrc if available, otherwise fallback to src
-                        clone.src = original.currentSrc || original.src;
-                    }
+                // Collapse srcset/sizes down to the single source the browser chose
+                // (now resolved, thanks to decodeSourceImage), so the clone renders
+                // exactly that candidate.
+                if (original.srcset || original.sizes) {
+                    clone.removeAttribute('srcset');
+                    clone.removeAttribute('sizes');
+                    clone.src = original.currentSrc || original.src;
                 }
             }
 
@@ -677,6 +704,7 @@
             isSVGElement: isSVGElement,
             isSVGRectElement: isSVGRectElement,
             isDimensionMissing: isDimensionMissing,
+            isInstanceOf: isInstanceOf,
         };
 
         function getWindow(node) {
@@ -688,12 +716,31 @@
             );
         }
 
-        function isElementHostForOpenShadowRoot(value) {
-            return isElement(value) && value.shadowRoot !== null;
+        function isInstanceOf(value, typeName) {
+            const ownerWindow = getWindow(value);
+            return (
+                instanceOfIn(value, ownerWindow, typeName) ||
+                instanceOfIn(value, ownerWindow && ownerWindow.parent, typeName)
+            );
+        }
+
+        // Cross-realm-safe `value instanceof win[typeName]`:
+        //  - a missing constructor (win[typeName] === undefined) would make a bare
+        //    `instanceof` throw a TypeError ("Right-hand side of 'instanceof' is
+        //    not an object" — see issue #184), so we require an actual function;
+        //  - reading a constructor off a cross-origin parent window throws a
+        //    SecurityError, so any access failure is treated as "not an instance".
+        function instanceOfIn(value, win, typeName) {
+            try {
+                const ctor = win && win[typeName];
+                return typeof ctor === 'function' && value instanceof ctor;
+            } catch (_e) {
+                return false;
+            }
         }
 
         function isShadowRoot(value) {
-            return value instanceof getWindow(value).ShadowRoot;
+            return isInstanceOf(value, 'ShadowRoot');
         }
 
         function isInShadowRoot(value) {
@@ -704,53 +751,55 @@
         }
 
         function isElement(value) {
-            return value instanceof getWindow(value).Element;
+            return isInstanceOf(value, 'Element');
+        }
+
+        function isElementHostForOpenShadowRoot(value) {
+            return isElement(value) && value.shadowRoot !== null;
         }
 
         function isHTMLCanvasElement(value) {
-            return value instanceof getWindow(value).HTMLCanvasElement;
+            return isInstanceOf(value, 'HTMLCanvasElement');
         }
 
         function isHTMLElement(value) {
-            return value instanceof getWindow(value).HTMLElement;
+            return isInstanceOf(value, 'HTMLElement');
         }
 
         function isHTMLImageElement(value) {
-            return value instanceof getWindow(value).HTMLImageElement;
+            return isInstanceOf(value, 'HTMLImageElement');
         }
 
         function isHTMLInputElement(value) {
-            return value instanceof getWindow(value).HTMLInputElement;
+            return isInstanceOf(value, 'HTMLInputElement');
         }
 
         function isHTMLLinkElement(value) {
-            return value instanceof getWindow(value).HTMLLinkElement;
+            return isInstanceOf(value, 'HTMLLinkElement');
         }
 
         function isHTMLScriptElement(value) {
-            return value instanceof getWindow(value).HTMLScriptElement;
+            return isInstanceOf(value, 'HTMLScriptElement');
         }
 
         function isHTMLStyleElement(value) {
-            return value instanceof getWindow(value).HTMLStyleElement;
+            return isInstanceOf(value, 'HTMLStyleElement');
         }
 
         function isHTMLTextAreaElement(value) {
-            return value instanceof getWindow(value).HTMLTextAreaElement;
+            return isInstanceOf(value, 'HTMLTextAreaElement');
         }
 
         function isShadowSlotElement(value) {
-            return (
-                isInShadowRoot(value) && value instanceof getWindow(value).HTMLSlotElement
-            );
+            return isInShadowRoot(value) && isInstanceOf(value, 'HTMLSlotElement');
         }
 
         function isSVGElement(value) {
-            return value instanceof getWindow(value).SVGElement;
+            return isInstanceOf(value, 'SVGElement');
         }
 
         function isSVGRectElement(value) {
-            return value instanceof getWindow(value).SVGRectElement;
+            return isInstanceOf(value, 'SVGRectElement');
         }
 
         function isDataUrl(url) {
@@ -890,7 +939,8 @@
                             const status = xhr.status;
                             // In local files, status is 0 upon success in Mozilla Firefox
                             if (
-                                (status === 0 && url.toLowerCase().startsWith('file://')) ||
+                                (status === 0 &&
+                                    url.toLowerCase().startsWith('file://')) ||
                                 (status >= 200 && status <= 300 && xhr.response !== null)
                             ) {
                                 const response = xhr.response;
@@ -930,7 +980,12 @@
                         if (placeholder) {
                             resolve(placeholder);
                         } else {
-                            fail('Status:' + xhr.status + ' while fetching resource: ' + url);
+                            fail(
+                                'Status:' +
+                                    xhr.status +
+                                    ' while fetching resource: ' +
+                                    url
+                            );
                         }
                     }
 
@@ -1109,7 +1164,7 @@
                 .then(function (urls) {
                     if (!domtoimage.impl.options.filterUrls) return urls;
                     return urls.filter(function (url) {
-                        return domtoimage.impl.options.filterUrls(url, baseUrl)
+                        return domtoimage.impl.options.filterUrls(url, baseUrl);
                     });
                 })
                 .then(function (urls) {

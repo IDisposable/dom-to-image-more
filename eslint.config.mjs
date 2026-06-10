@@ -25,10 +25,8 @@ export default [
         },
 
         rules: {
-            'indent': ['error', 4],
-            'linebreak-style': ['error', 'unix'],
-            'quotes': ['error', 'single'],
-            'semi': ['error', 'always'],
+            // Formatting (indent, quotes, semi, linebreak-style, etc.) is owned
+            // by Prettier and verified via `prettier --check` in the lint script.
             'no-unused-vars': [
                 'error',
                 {

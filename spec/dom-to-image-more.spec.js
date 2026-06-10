@@ -7,7 +7,8 @@
     const Promise = global.Promise;
     const Tesseract = global.Tesseract;
     const BASE_URL = '/base/spec/resources/';
-    const validPlaceholder = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAMSURBVBhXY7h79y4ABTICmGnXPbMAAAAASUVORK5CYII=';
+    const validPlaceholder =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAMSURBVBhXY7h79y4ABTICmGnXPbMAAAAASUVORK5CYII=';
 
     describe('domtoimage', function () {
         afterEach(purgePage);
@@ -961,6 +962,28 @@
                 assert(uid2.length >= 4);
                 assert.notEqual(uid1, uid2);
             });
+
+            it('isInstanceOf matches real constructors across realms', function () {
+                const div = document.createElement('div');
+                const img = document.createElement('img');
+                assert.isTrue(domtoimage.impl.util.isInstanceOf(div, 'HTMLElement'));
+                assert.isTrue(domtoimage.impl.util.isInstanceOf(img, 'HTMLImageElement'));
+                assert.isFalse(
+                    domtoimage.impl.util.isInstanceOf(div, 'HTMLImageElement')
+                );
+            });
+
+            it('isInstanceOf returns false instead of throwing for a missing constructor (issue #184)', function () {
+                const div = document.createElement('div');
+                // A bare `value instanceof window['NoSuchConstructorXYZ']` throws
+                // "Right-hand side of 'instanceof' is not an object".
+                assert.doesNotThrow(function () {
+                    domtoimage.impl.util.isInstanceOf(div, 'NoSuchConstructorXYZ');
+                });
+                assert.isFalse(
+                    domtoimage.impl.util.isInstanceOf(div, 'NoSuchConstructorXYZ')
+                );
+            });
         });
 
         describe('web fonts', function () {
@@ -1030,7 +1053,7 @@
                     domtoimage.impl.options.imagePlaceholder = validPlaceholder;
 
                     // Mock XMLHttpRequest to simulate status 0
-                    global.XMLHttpRequest = function() {
+                    global.XMLHttpRequest = function () {
                         const mockXHR = {
                             readyState: XMLHttpRequest.UNSENT,
                             status: 0,
@@ -1041,8 +1064,8 @@
                             responseType: '',
                             timeout: 0,
                             withCredentials: false,
-                            open: function() {},
-                            send: function() {
+                            open: function () {},
+                            send: function () {
                                 // Simulate the request completing with status 0
                                 setTimeout(() => {
                                     mockXHR.readyState = XMLHttpRequest.DONE;
@@ -1052,20 +1075,21 @@
                                     }
                                 }, 10);
                             },
-                            setRequestHeader: function() {}
+                            setRequestHeader: function () {},
                         };
                         return mockXHR;
                     };
 
                     domtoimage.impl.util
-                        .getAndEncode('http://example.com/test-image-with-placeholder.png')
+                        .getAndEncode(
+                            'http://example.com/test-image-with-placeholder.png'
+                        )
                         .then(function (resource) {
                             assert.equal(resource, validPlaceholder);
                         })
                         .then(done)
                         .catch(done);
-                }
-                finally {
+                } finally {
                     global.XMLHttpRequest = originalXHR;
                 }
             });
@@ -1075,11 +1099,11 @@
                 try {
                     domtoimage.impl.copyOptions({}); // since we're bypassing the normal options flow
                     domtoimage.impl.options.imagePlaceholder = undefined;
-                    
+
                     // Mock XMLHttpRequest to simulate status 0
-                    global.XMLHttpRequest = function() {
+                    global.XMLHttpRequest = function () {
                         const mockXHR = {
-                            readyState:  XMLHttpRequest.UNSENT,
+                            readyState: XMLHttpRequest.UNSENT,
                             status: 0,
                             response: null,
                             onloadend: null,
@@ -1087,8 +1111,8 @@
                             responseType: '',
                             timeout: 0,
                             withCredentials: false,
-                            open: function() {},
-                            send: function() {
+                            open: function () {},
+                            send: function () {
                                 // Simulate the request completing with status 0
                                 setTimeout(() => {
                                     mockXHR.readyState = XMLHttpRequest.DONE;
@@ -1098,21 +1122,22 @@
                                     }
                                 }, 10);
                             },
-                            setRequestHeader: function() {}
+                            setRequestHeader: function () {},
                         };
                         return mockXHR;
                     };
 
                     domtoimage.impl.util
-                        .getAndEncode('http://example.com/test-image-without-placeholder.png')
+                        .getAndEncode(
+                            'http://example.com/test-image-without-placeholder.png'
+                        )
                         .then(function (resource) {
                             // Should return empty string when status is 0 and no placeholder
                             assert.equal(resource, '');
                         })
                         .then(done)
                         .catch(done);
-                }
-                finally {
+                } finally {
                     global.XMLHttpRequest = originalXHR;
                 }
             });
@@ -1124,9 +1149,9 @@
                     domtoimage.impl.options.imagePlaceholder = validPlaceholder;
 
                     // Mock XMLHttpRequest to simulate status 0
-                    global.XMLHttpRequest = function() {
+                    global.XMLHttpRequest = function () {
                         const mockXHR = {
-                            readyState:  XMLHttpRequest.UNSENT,
+                            readyState: XMLHttpRequest.UNSENT,
                             status: 0,
                             response: null,
                             onloadend: null,
@@ -1134,8 +1159,8 @@
                             responseType: '',
                             timeout: 0,
                             withCredentials: false,
-                            open: function() {},
-                            send: function() {
+                            open: function () {},
+                            send: function () {
                                 // Simulate the request completing with status 0
                                 setTimeout(() => {
                                     mockXHR.readyState = XMLHttpRequest.DONE;
@@ -1146,7 +1171,7 @@
                                     }
                                 }, 10);
                             },
-                            setRequestHeader: function() {}
+                            setRequestHeader: function () {},
                         };
                         return mockXHR;
                     };
@@ -1159,8 +1184,7 @@
                         })
                         .then(done)
                         .catch(done);
-                }
-                finally {
+                } finally {
                     global.XMLHttpRequest = originalXHR;
                 }
             });
@@ -1169,32 +1193,24 @@
         describe('styles', function () {
             it('should compute correct keys', function (done) {
                 this.timeout(30000);
-                let one = Promise.allSettled([
-                    loadTestPage(
-                        'padding/dom-node.html',
-                        'padding/style.css',
-                        'padding/control-image'
-                    ).then((node) => renderToSvg(node, { styleCaching: 'strict' })),
-                ]).then((promises) => promises[0].value);
-                let two = Promise.allSettled([
-                    loadTestPage(
-                        'padding/dom-node.html',
-                        'padding/style.css',
-                        'padding/control-image'
-                    ).then((node) => renderToSvg(node, { styleCaching: 'relaxed' })),
-                ]).then((promises) => promises[0].value);
-
-                Promise.allSettled([one, two])
-                    .then(function (promises) {
-                        const strict = promises[0].value;
-                        const relaxed = promises[1].value;
-                        if (strict !== relaxed) {
-                            console.log(
-                                `\n\nstrict: ${strict}\n\nrelaxed: ${relaxed}\n\n`
-                            );
-                        }
-                        assert.equal(strict, relaxed, 'SVG rendered be same');
-                    })
+                loadTestPage(
+                    'padding/dom-node.html',
+                    'padding/style.css',
+                    'padding/control-image'
+                )
+                    .then(() => renderToSvg(domNode(), { styleCaching: 'strict' }))
+                    .then((strict) =>
+                        renderToSvg(domNode(), { styleCaching: 'relaxed' }).then(
+                            (relaxed) => {
+                                if (strict !== relaxed) {
+                                    console.log(
+                                        `\n\nstrict: ${strict}\n\nrelaxed: ${relaxed}\n\n`
+                                    );
+                                }
+                                assert.equal(strict, relaxed, 'SVG rendered be same');
+                            }
+                        )
+                    )
                     .then(done)
                     .catch(done);
             });
@@ -1328,7 +1344,8 @@
 
         function testPNGBlob() {
             // create a PNG Blob (1x1 pixel with 0xaabbccff color)
-            const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8//8/AwAI/wH+9QAAAABJRU5ErkJggg==';
+            const pngBase64 =
+                'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8//8/AwAI/wH+9QAAAABJRU5ErkJggg==';
             const byteCharacters = atob(pngBase64);
             const byteNumbers = new Array(byteCharacters.length);
             for (let i = 0; i < byteCharacters.length; i++) {
