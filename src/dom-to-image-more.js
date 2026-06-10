@@ -556,6 +556,38 @@
 
             function cloneStyle() {
                 copyStyle(original, clone);
+                fixInheritedVisibility();
+
+                // `visibility` is inherited, but the style copy pins each element's
+                // *computed* value. So an element that is hidden only because an
+                // ancestor is `visibility:hidden` ends up with an explicit
+                // `visibility:hidden` of its own — and so does the captured root.
+                // Rendering a node from inside a hidden subtree then comes out blank
+                // (issue #167). Fix: on the captured root (no parent), force it visible
+                // — the caller explicitly asked to render it; on descendants, drop
+                // visibility when it merely equals the parent's (i.e. inherited) so it
+                // follows the now-visible root, while keeping genuine per-element
+                // overrides (visible-inside-hidden, or hidden-inside-visible). Covers
+                // both the fast-path and the cssText path.
+                function fixInheritedVisibility() {
+                    const sourceVisibility =
+                        getComputedStyle(original).getPropertyValue('visibility');
+
+                    if (parentComputedStyles === null) {
+                        // 'hidden' or 'collapse' (collapse renders like hidden off
+                        // tables) — both blank the explicitly-captured root.
+                        if (sourceVisibility !== 'visible') {
+                            clone.style.setProperty('visibility', 'visible');
+                        }
+                        return;
+                    }
+
+                    const parentVisibility =
+                        parentComputedStyles.getPropertyValue('visibility');
+                    if (sourceVisibility === parentVisibility) {
+                        clone.style.removeProperty('visibility');
+                    }
+                }
 
                 function copyFont(source, target) {
                     target.font = source.font;

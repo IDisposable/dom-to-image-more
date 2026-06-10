@@ -49,6 +49,66 @@
         });
 
         describe('features', function () {
+            // #167: capturing a node that sits inside a `visibility:hidden` ancestor
+            // rendered blank — the inherited computed `visibility:hidden` was pinned
+            // onto the captured root and every descendant. The root is now forced
+            // visible (the caller explicitly asked to render it) and inherited
+            // visibility is dropped on descendants so they follow it.
+            it('renders a node captured from inside a visibility:hidden ancestor (#167)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="hiddenParent" style="visibility:hidden">' +
+                            '<div id="target" style="width:40px;height:20px;background:red">' +
+                            '<span id="kid">hi</span></div></div>';
+                        return domtoimage.toSvg(document.getElementById('target'));
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const target = (decoded.match(/<div id="target"[^>]*>/) || [])[0];
+                        const kid = (decoded.match(/<span id="kid"[^>]*>/) || [])[0];
+                        assert.isString(target, 'target should be in the output');
+                        // Root forced visible; descendant must not carry hidden.
+                        assert.notMatch(
+                            target,
+                            /visibility:\s*hidden/,
+                            'captured root must not stay hidden'
+                        );
+                        assert.notMatch(
+                            kid,
+                            /visibility:\s*hidden/,
+                            'descendant must not inherit a pinned hidden'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // #167 guard: a *genuine* per-element `visibility:hidden` inside an
+            // otherwise-visible capture must still be preserved (not blanket-reset).
+            it('preserves an explicit visibility:hidden within a visible capture (#167)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="vis">shown' +
+                            '<span id="gone" style="visibility:hidden">hidden</span>' +
+                            '</div>';
+                        return domtoimage.toSvg(document.getElementById('vis'));
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const gone = (decoded.match(/<span id="gone"[^>]*>/) || [])[0];
+                        assert.isString(gone, 'span should be in the output');
+                        assert.match(
+                            gone,
+                            /visibility:\s*hidden/,
+                            'an explicit visibility:hidden override must be preserved'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
             // #227 (part 1): UA stylesheets underline `a[href]`. The sandbox builds a
             // default `<a>` from the tag name alone (no href), so its baseline has no
             // underline. A page that removes the underline (`a{text-decoration:none}`)

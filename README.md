@@ -519,6 +519,21 @@ need to reach into it for testing.
   returned promise rejects so your `.catch()` can handle it, rather than silently
   returning a blank image. In short: missing content degrades, a broken output rejects.
 
+- A node hidden by an ancestor's `visibility: hidden` **is** rendered: because you asked
+  to capture that node explicitly, the captured root is forced visible (and its
+  descendants follow), while any deliberate per-element `visibility: hidden` inside the
+  subtree is still honored. Two related cases are **not** rescued the same way, because
+  they are not inherited and the value is often intentional:
+
+    - **`display: none` on the node you pass** (or an ancestor) — a `display: none`
+      element has no layout box at all, so it measures `0×0`; there is nothing to render.
+      Un-hide it (e.g. move it off-screen with `position: absolute; left: -9999px`) before
+      capturing.
+
+    - **`opacity: 0` on the node you pass** — the capture honors it and comes out fully
+      transparent. Raise the opacity (or override it via the
+      [adjustClonedNode](#adjustclonednode) hook) before rendering if you want it visible.
+
 ## Authors
 
 Marc Brooks, Anatolii Saienko (original dom-to-image), Paul Bakaus (original idea), Aidas
