@@ -1164,7 +1164,7 @@
                 .then(function (urls) {
                     if (!domtoimage.impl.options.filterUrls) return urls;
                     return urls.filter(function (url) {
-                        return domtoimage.impl.options.filterUrls(url, baseUrl)
+                        return domtoimage.impl.options.filterUrls(url, baseUrl);
                     });
                 })
                 .then(function (urls) {
