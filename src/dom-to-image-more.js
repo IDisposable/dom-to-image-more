@@ -1653,7 +1653,20 @@
             });
 
             function inlineCSSProperty(node) {
-                const properties = ['background', 'background-image'];
+                // `mask`/`mask-image` (and the `-webkit-` forms) are how SVG icons are
+                // commonly tinted on an element (`mask: url(icon.svg); background:
+                // currentColor`). Like backgrounds, their `url()`s must be inlined or
+                // the standalone output can't fetch them and the icon renders blank
+                // (issue #195). Names are read explicitly via getPropertyValue, so this
+                // is robust regardless of which a browser enumerates.
+                const properties = [
+                    'background',
+                    'background-image',
+                    'mask',
+                    'mask-image',
+                    '-webkit-mask',
+                    '-webkit-mask-image',
+                ];
 
                 const inliningTasks = properties.map(function (propertyName) {
                     const value = node.style.getPropertyValue(propertyName);

@@ -49,6 +49,133 @@
         });
 
         describe('features', function () {
+            // #195: an SVG icon rendered on an element via a CSS mask
+            // (`mask: url(icon.svg); background: currentColor`) came out blank because
+            // the inliner only inlined `background`/`background-image`, leaving the mask
+            // url external — and the standalone output can't fetch external resources.
+            // The inliner now inlines mask urls too.
+            it('inlines a CSS mask-image url (#195)', function (done) {
+                this.timeout(15000);
+                const url = '/base/spec/resources/images/image.png';
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<i id="maskicon" style="display:inline-block;width:20px;height:20px;' +
+                            'background-color:red;-webkit-mask-image:url(' +
+                            url +
+                            ');mask-image:url(' +
+                            url +
+                            ')"></i>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const mask = (decoded.match(/<i id="maskicon"[^>]*>/) || [])[0];
+                        assert.isString(mask, 'masked icon should be in the output');
+                        assert.include(
+                            mask,
+                            'data:image',
+                            'the mask url must be inlined as a data: URL'
+                        );
+                        assert.notInclude(
+                            mask,
+                            'image.png',
+                            'the external mask url must not survive (unfetchable in the output)'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // #149: an icon delivered as an `@font-face` glyph via a `::before`
+            // pseudo-element. The composition works — the web font is embedded and the
+            // pseudo-element's `content` glyph + font-family are captured. (The original
+            // report's failure was an external icon font that couldn't be embedded —
+            // the documented web-font/CORS limitation — not a distinct bug.)
+            it('captures an icon-font glyph from a ::before pseudo-element (#149)', function (done) {
+                this.timeout(15000);
+                const style = document.createElement('style');
+                style.id = 's149';
+                style.textContent =
+                    "@font-face { font-family: 'Ico149'; src: url('/base/test-lib/fontawesome/webfonts/fa-solid-900.woff2') format('woff2'); }" +
+                    '#icon::before { content: "\\2605"; font-family: "Ico149"; font-size: 30px; }';
+                document.head.appendChild(style);
+                function cleanup() {
+                    const el = document.getElementById('s149');
+                    if (el) {
+                        el.remove();
+                    }
+                }
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML = '<span id="icon"></span>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        // The web font must be inlined...
+                        assert.include(
+                            decoded,
+                            'base64',
+                            'the @font-face glyph font must be embedded'
+                        );
+                        // ...and the pseudo-element must keep its glyph + font.
+                        assert.include(
+                            decoded,
+                            'content: "★"',
+                            'the ::before glyph content must be preserved'
+                        );
+                        assert.include(
+                            decoded,
+                            'Ico149',
+                            'the icon font-family must reach the pseudo-element'
+                        );
+                    })
+                    .then(cleanup)
+                    .then(done)
+                    .catch(function (e) {
+                        cleanup();
+                        done(e);
+                    });
+            });
+
+            // #139: an SVG icon used via `<use xlink:href="#id">` referencing a
+            // `<symbol>` defined OUTSIDE the rendered subtree (the Vue/webpack
+            // svg-sprite pattern) was missing from the export. Closed by #215's
+            // collect-and-inject (legacy xlink:href + currentColor preserved).
+            it('renders an out-of-subtree icon-sprite <use xlink:href> (#139)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        const sprite =
+                            '<svg style="display:none" xmlns="http://www.w3.org/2000/svg">' +
+                            '<symbol id="icon-star" viewBox="0 0 10 10">' +
+                            '<path id="starpath" d="M5 0 L6 4 L10 4 L7 6 L8 10 L5 7 L2 10 L3 6 L0 4 L4 4 Z" fill="currentColor"></path>' +
+                            '</symbol></svg>';
+                        document
+                            .querySelector('#test-root')
+                            .insertAdjacentHTML('afterbegin', sprite);
+                        domNode().innerHTML =
+                            '<div style="color:red"><svg class="icon" width="20" height="20" xmlns="http://www.w3.org/2000/svg">' +
+                            '<use xlink:href="#icon-star"></use></svg></div>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        assert.include(
+                            decoded,
+                            'id="icon-star"',
+                            'referenced symbol must be injected'
+                        );
+                        assert.include(
+                            decoded,
+                            'id="starpath"',
+                            "the symbol's contents must be injected"
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
             // #205: rendering a non-root SVG element (`<g>`, `<path>`, …) directly used
             // to reject — the bare element was wrapped in an XHTML <foreignObject> where
             // it can't render. It is now wrapped in a real <svg> framed by its getBBox,
