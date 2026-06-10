@@ -49,6 +49,49 @@
         });
 
         describe('features', function () {
+            // #205: rendering a non-root SVG element (`<g>`, `<path>`, …) directly used
+            // to reject — the bare element was wrapped in an XHTML <foreignObject> where
+            // it can't render. It is now wrapped in a real <svg> framed by its getBBox,
+            // so it rasterizes. Render the <g> and sample a pixel inside its red rect.
+            it('renders a non-root SVG <g> element (#205)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg">' +
+                            '<g id="grp" transform="translate(10,10)">' +
+                            '<rect x="0" y="0" width="40" height="30" fill="rgb(255,0,0)"></rect>' +
+                            '<circle cx="60" cy="20" r="15" fill="rgb(0,0,255)"></circle>' +
+                            '</g></svg>';
+                        return domtoimage.toPixelData(document.getElementById('grp'));
+                    })
+                    .then(function (pixels) {
+                        assert.isAbove(
+                            pixels.length,
+                            0,
+                            'should produce pixel data, not reject'
+                        );
+                        // bbox is 75x35; sample (5,5) which is inside the red rect.
+                        const i = (5 * 75 + 5) * 4;
+                        assert.isAbove(
+                            pixels[i],
+                            200,
+                            'red channel at the rect should be high'
+                        );
+                        assert.isBelow(
+                            pixels[i + 2],
+                            80,
+                            'blue channel at the rect should be low'
+                        );
+                        assert.isAbove(
+                            pixels[i + 3],
+                            200,
+                            'pixel at the rect should be opaque'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
             // #191: a CSS `url()` set via options.style (the browser normalizes it to
             // double quotes) was serialized inside the double-quoted style attribute as
             // `url(&quot;…&quot;)`. We now emit clean single-quoted `url('…')`.

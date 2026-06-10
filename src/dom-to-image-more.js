@@ -253,6 +253,13 @@
         }
 
         function makeSvgDataUri(clone) {
+            // A non-root SVG element (`<g>`, `<path>`, `<circle>`, …) is meaningless
+            // inside an XHTML `<foreignObject>` and fails to rasterize (issue #205).
+            // Wrap it in a real synthesized `<svg>` framed by its bounding box instead.
+            if (util.isSVGElement(node) && !util.isSVGSVGElement(node)) {
+                return makeNonRootSvgDataUri(clone);
+            }
+
             const finalizeEnsureShown = revealRootIfHidden(clone);
             let width;
             let height;
@@ -282,6 +289,47 @@
                         (util.isDimensionMissing(width) ? '' : ` width="${width}"`) +
                         (util.isDimensionMissing(height) ? '' : ` height="${height}"`);
                     return `<svg xmlns="http://www.w3.org/2000/svg"${svgSizing}><foreignObject${foreignObjectSizing}>${xhtml}</foreignObject></svg>`;
+                })
+                .then(function (svg) {
+                    return `data:image/svg+xml;charset=utf-8,${svg}`;
+                });
+        }
+
+        // Render a non-root SVG element (`<g>`, `<path>`, …) by wrapping its clone in a
+        // freshly synthesized `<svg>` framed by the original's `getBBox()` (issue #205).
+        // No `<foreignObject>` and no XHTML namespace — the element is real SVG content.
+        // The element's own positioning transform placed it within its *original* svg
+        // and is meaningless once extracted, so it is dropped and the bbox `x/y` drives
+        // the `viewBox` so the geometry frames exactly. Falls back to a 0 box if getBBox
+        // is unavailable (detached / `display:none`).
+        function makeNonRootSvgDataUri(clone) {
+            const SVG_NS = 'http://www.w3.org/2000/svg';
+            let box;
+            try {
+                box = node.getBBox();
+            } catch (_e) {
+                box = { x: 0, y: 0, width: 0, height: 0 };
+            }
+
+            clone.removeAttribute('transform');
+            clone.style.removeProperty('transform');
+
+            const width = options.width || box.width;
+            const height = options.height || box.height;
+
+            return Promise.resolve(clone)
+                .then(function (svgEl) {
+                    svgEl.setAttribute('xmlns', SVG_NS);
+                    return new XMLSerializer().serializeToString(svgEl);
+                })
+                .then(normalizeCssUrlQuotes)
+                .then(util.escapeXhtml)
+                .then(function (inner) {
+                    const sizing =
+                        (util.isDimensionMissing(width) ? '' : ` width="${width}"`) +
+                        (util.isDimensionMissing(height) ? '' : ` height="${height}"`);
+                    const viewBox = `${box.x} ${box.y} ${box.width} ${box.height}`;
+                    return `<svg xmlns="${SVG_NS}"${sizing} viewBox="${viewBox}">${inner}</svg>`;
                 })
                 .then(function (svg) {
                     return `data:image/svg+xml;charset=utf-8,${svg}`;
@@ -914,6 +962,7 @@
             isHTMLTextAreaElement: isHTMLTextAreaElement,
             isShadowSlotElement: isShadowSlotElement,
             isSVGElement: isSVGElement,
+            isSVGSVGElement: isSVGSVGElement,
             isSVGRectElement: isSVGRectElement,
             isSVGUseElement: isSVGUseElement,
             isDimensionMissing: isDimensionMissing,
@@ -1009,6 +1058,10 @@
 
         function isSVGElement(value) {
             return isInstanceOf(value, 'SVGElement');
+        }
+
+        function isSVGSVGElement(value) {
+            return isInstanceOf(value, 'SVGSVGElement');
         }
 
         function isSVGRectElement(value) {
@@ -1344,6 +1397,9 @@
 
             if (!isNaN(width)) return width;
 
+            const box = svgBoundingBox(node);
+            if (box) return box.width;
+
             const leftBorder = px(node, 'border-left-width');
             const rightBorder = px(node, 'border-right-width');
             return node.scrollWidth + leftBorder + rightBorder;
@@ -1354,9 +1410,29 @@
 
             if (!isNaN(height)) return height;
 
+            const box = svgBoundingBox(node);
+            if (box) return box.height;
+
             const topBorder = px(node, 'border-top-width');
             const bottomBorder = px(node, 'border-bottom-width');
             return node.scrollHeight + topBorder + bottomBorder;
+        }
+
+        // An SVG sub-element (`<g>`, `<path>`, …) has no CSS box, so getComputedStyle
+        // width/height are `auto` and `scrollWidth`/`scrollHeight` don't exist — sizing
+        // would come out 0/NaN. Its rendered extent is its `getBBox()` instead. Returns
+        // null for non-SVG nodes and when the box is empty or unavailable (e.g. a
+        // detached / `display:none` element, where getBBox throws).
+        function svgBoundingBox(node) {
+            if (node.nodeType !== ELEMENT_NODE || typeof node.getBBox !== 'function') {
+                return null;
+            }
+            try {
+                const box = node.getBBox();
+                return box && (box.width || box.height) ? box : null;
+            } catch (_e) {
+                return null;
+            }
         }
 
         function px(node, styleProperty) {

@@ -37,6 +37,7 @@ correctly across `<iframe>` boundaries).
 | `isHTMLStyleElement(value)`             | an `HTMLStyleElement`                                                                                                   |
 | `isHTMLTextAreaElement(value)`          | an `HTMLTextAreaElement`                                                                                                |
 | `isSVGElement(value)`                   | an `SVGElement`                                                                                                         |
+| `isSVGSVGElement(value)`                | an `SVGSVGElement` (an `<svg>` root; non-root SVG elements take a different render path)                                |
 | `isSVGRectElement(value)`               | an `SVGRectElement`                                                                                                     |
 | `isSVGUseElement(value)`                | an `SVGUseElement` (a `<use>` referencing an element to inline)                                                         |
 | `isShadowRoot(value)`                   | a `ShadowRoot`                                                                                                          |
@@ -202,6 +203,7 @@ collides.
 | `isHTMLTextAreaElement`          | type guard | `boolean`                                |
 | `isShadowSlotElement`            | type guard | `boolean`                                |
 | `isSVGElement`                   | type guard | `boolean`                                |
+| `isSVGSVGElement`                | type guard | `boolean`                                |
 | `isSVGRectElement`               | type guard | `boolean`                                |
 | `isSVGUseElement`                | type guard | `boolean`                                |
 | `isInstanceOf`                   | type guard | `boolean`                                |
