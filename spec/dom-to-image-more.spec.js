@@ -876,6 +876,10 @@
                     'foo.com',
                     'bar.org',
                 ]);
+                // #138: matched quotes (incl. values containing spaces) must
+                // extract cleanly — guards the symmetric-quote backreference regex.
+                assert.deepEqual(parse("url('/img/b g.png')"), ['/img/b g.png']);
+                assert.deepEqual(parse('url("/img/b g.png")'), ['/img/b g.png']);
             });
 
             it('should ignore data urls', function () {
@@ -1067,6 +1071,23 @@
                 assert.isFalse(
                     domtoimage.impl.util.isInstanceOf(div, 'NoSuchConstructorXYZ')
                 );
+            });
+
+            it('makeImage rejects with a real Error, not a bare Event (issues #201, #152)', function (done) {
+                // A malformed image source makes the <img> fire onerror; the
+                // rejection must be a real Error with a message (not the raw
+                // Event, which surfaces as an opaque "Uncaught (in promise) Event").
+                domtoimage.impl.util
+                    .makeImage('data:image/png;base64,!not-valid-base64!')
+                    .then(function () {
+                        done(new Error('expected makeImage to reject'));
+                    })
+                    .catch(function (err) {
+                        assert.instanceOf(err, Error);
+                        assert.match(err.message, /dom-to-image-more/);
+                        assert.ok(err.cause, 'original event preserved as cause');
+                        done();
+                    });
             });
         });
 

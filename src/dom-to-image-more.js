@@ -874,10 +874,27 @@
                     }
                 };
 
-                image.onerror = (error) => {
+                image.onerror = (event) => {
                     // Cleanup: remove the image from the document (no-op if the
                     // node was already detached).
                     svg.remove();
+                    // An <img> load failure delivers a bare "error" Event (not an
+                    // ErrorEvent) with no message/reason — browsers don't expose
+                    // why a load failed — so it surfaces to callers as an opaque
+                    // "Uncaught (in promise) Event" (issues #201, #152). Reject with
+                    // a real Error instead. The only useful context is what we tried
+                    // to rasterize: include the data-URI header (mime type) and its
+                    // size, and keep the original event as `.cause` for debugging.
+                    const header = String(uri).split(',', 1)[0]; // e.g. data:image/svg+xml;charset=utf-8
+                    const error = new Error(
+                        'dom-to-image-more: failed to rasterize the generated image (' +
+                            header +
+                            ', ' +
+                            String(uri).length +
+                            ' bytes). The source may contain malformed markup, an ' +
+                            'unsupported element, or a tainted/cross-origin resource.'
+                    );
+                    error.cause = event;
                     reject(error);
                 };
 
