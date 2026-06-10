@@ -12,6 +12,21 @@ declare namespace domToImage {
      * work around CORS restrictions. The token `#{cors}` is replaced with the
      * target image URL in `url` and in any string value of `data`.
      */
+    /** Details passed to the `onImageError` callback when a resource fails to load. */
+    interface ImageErrorInfo {
+        /** The resource URL that failed (may include a cache-busting suffix). */
+        url: string;
+        /** Human-readable description of the failure. */
+        message: string;
+        /** HTTP status of the failed request (0 for network errors/timeouts). */
+        status: number;
+        /**
+         * `true` if a placeholder image will be substituted, `false` if the
+         * resource is dropped (resolved to an empty string).
+         */
+        willUsePlaceholder: boolean;
+    }
+
     interface CorsImgOptions {
         /** Proxy endpoint; `#{cors}` is replaced by the target URL. */
         url?: string;
@@ -43,6 +58,12 @@ declare namespace domToImage {
          * is ignored.
          */
         adjustClonedNode?: (node: Node, clone: Node, after: boolean) => Node | void;
+        /**
+         * Invoked when a resource (image/font) cannot be fetched. Purely
+         * observational — the render still degrades gracefully (placeholder or
+         * empty string); use it for logging/telemetry of broken resources.
+         */
+        onImageError?: (info: ImageErrorInfo) => void;
         /**
          * Invoked with the fully cloned and modified node tree, allowing final
          * adjustments before serialization. May return a promise to defer

@@ -37,4 +37,16 @@ export default [
             ],
         },
     },
+    {
+        // Build/test config files run in Node (CommonJS), not the browser, so
+        // they need Node globals (require, module, process, __dirname, …) and the
+        // CommonJS source type instead of the browser/ESM defaults above.
+        files: ['karma.conf.js', 'Gruntfile.js'],
+        languageOptions: {
+            globals: {
+                ...globals.node,
+            },
+            sourceType: 'commonjs',
+        },
+    },
 ];
