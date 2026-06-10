@@ -49,6 +49,178 @@
         });
 
         describe('features', function () {
+            // ensureShown (opt-in): force the explicitly-captured root to appear even
+            // when it is hidden by its own display:none / opacity:0. display:none has no
+            // layout box, so the original is briefly revealed in place to measure, the
+            // size feeds the SVG, and the clone root takes the revealed UA display. The
+            // original must be left exactly as it was.
+            it('ensureShown renders a display:none root and restores the original', function (done) {
+                let original;
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="none" style="display:none">natural sized content</div>';
+                        original = document.getElementById('none');
+                        return domtoimage.toSvg(original, { ensureShown: true });
+                    })
+                    .then(function (svg) {
+                        const root = (svg.match(/<div id="none"[^>]*>/) || [])[0];
+                        assert.isString(root, 'root should be in the output');
+                        // Clone root un-hidden, and the SVG got a real measured size.
+                        assert.notMatch(
+                            root,
+                            /display:\s*none/,
+                            'clone root must not stay display:none'
+                        );
+                        assert.match(
+                            svg,
+                            /<svg[^>]*\swidth="\d/,
+                            'a display:none root must be measured to a real width'
+                        );
+                        // The live original must be untouched.
+                        assert.equal(
+                            original.style.display,
+                            'none',
+                            'the original inline display:none must be restored'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            it('ensureShown reveals an opacity:0 root', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="op" style="opacity:0;width:30px;height:10px">y</div>';
+                        return domtoimage.toSvg(document.getElementById('op'), {
+                            ensureShown: true,
+                        });
+                    })
+                    .then(function (svg) {
+                        const root = (svg.match(/<div id="op"[^>]*>/) || [])[0];
+                        assert.isString(root, 'root should be in the output');
+                        assert.match(
+                            root,
+                            /opacity:\s*1/,
+                            'opacity:0 root must be forced opaque'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // ensureShown must reveal the element's REAL display, not a blanket reset:
+            // an inline `display:none` over a class's `display:flex` should come back as
+            // flex (dropping the inline lets the cascade restore it), not `block`.
+            it('ensureShown restores the real display, not block (#ensureShown flex)', function (done) {
+                const style = document.createElement('style');
+                style.id = 'flex-es';
+                style.textContent = '#flexroot { display: flex; }';
+                document.head.appendChild(style);
+                function cleanup() {
+                    const el = document.getElementById('flex-es');
+                    if (el) {
+                        el.remove();
+                    }
+                }
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="flexroot" style="display:none"><span>a</span></div>';
+                        return domtoimage.toSvg(document.getElementById('flexroot'), {
+                            ensureShown: true,
+                        });
+                    })
+                    .then(function (svg) {
+                        const root = (svg.match(/<div id="flexroot"[^>]*>/) || [])[0];
+                        assert.isString(root, 'root should be in the output');
+                        assert.match(
+                            root,
+                            /display:\s*flex/,
+                            'shown display must be the real flex, not a reverted block'
+                        );
+                    })
+                    .then(cleanup)
+                    .then(done)
+                    .catch(function (e) {
+                        cleanup();
+                        done(e);
+                    });
+            });
+
+            // ensureShown edge: a meaningful inline display defeated by a stylesheet
+            // `display:none !important` should be recovered from the inline value, not
+            // reverted to the UA default.
+            it('ensureShown recovers an inline display under !important none', function (done) {
+                const style = document.createElement('style');
+                style.id = 'imp-es';
+                style.textContent = '#improot { display: none !important; }';
+                document.head.appendChild(style);
+                function cleanup() {
+                    const el = document.getElementById('imp-es');
+                    if (el) {
+                        el.remove();
+                    }
+                }
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="improot" style="display:flex"><span>a</span></div>';
+                        return domtoimage.toSvg(document.getElementById('improot'), {
+                            ensureShown: true,
+                        });
+                    })
+                    .then(function (svg) {
+                        const root = (svg.match(/<div id="improot"[^>]*>/) || [])[0];
+                        assert.isString(root, 'root should be in the output');
+                        assert.match(
+                            root,
+                            /display:\s*flex/,
+                            'must recover the inline flex, not revert to block'
+                        );
+                    })
+                    .then(cleanup)
+                    .then(done)
+                    .catch(function (e) {
+                        cleanup();
+                        done(e);
+                    });
+            });
+
+            // ensureShown is root-only: a deliberately hidden *descendant* stays hidden,
+            // and the flag is opt-in (default off leaves the root hidden).
+            it('ensureShown is root-only and opt-in', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="host">shown' +
+                            '<div id="child" style="display:none">child</div></div>';
+                        return Promise.all([
+                            domtoimage.toSvg(document.getElementById('host'), {
+                                ensureShown: true,
+                            }),
+                            domtoimage.toSvg(document.getElementById('child')),
+                        ]);
+                    })
+                    .then(function (r) {
+                        const child = (r[0].match(/<div id="child"[^>]*>/) || [])[0];
+                        assert.match(
+                            child,
+                            /display:\s*none/,
+                            'a hidden descendant must stay hidden (root-only)'
+                        );
+                        // Without the flag, a display:none root is not measured.
+                        assert.notMatch(
+                            r[1],
+                            /<svg[^>]*\swidth="\d/,
+                            'default (no ensureShown) must not reveal a hidden root'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
             // #167: capturing a node that sits inside a `visibility:hidden` ancestor
             // rendered blank — the inherited computed `visibility:hidden` was pinned
             // onto the captured root and every descendant. The root is now forced

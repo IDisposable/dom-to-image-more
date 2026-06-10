@@ -30,6 +30,7 @@ const opts: Options = {
     copyDefaultStyles: false,
     disableEmbedFonts: true,
     disableInlineImages: true,
+    ensureShown: true,
     useCredentials: true,
     useCredentialsFilters: [/foo/, 'bar'],
     httpTimeout: 5000,

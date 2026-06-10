@@ -279,6 +279,23 @@ SVGs that reference the original image files, so they my break if a referenced U
 This is always safe to use when generating a PNG/JPG file because the entire SVG image is
 rendered.
 
+#### ensureShown
+
+Set to true to force the node you pass in to be rendered even when it is hidden by its own
+`display: none` or `opacity: 0`. This is **opt-in** and applies only to the captured
+**root**: deliberate hiding of elements _inside_ the subtree (e.g. a collapsed panel) is
+left intact. Because a `display: none` element has no layout box, the original is briefly
+revealed in place to measure it (synchronously, so nothing flashes on screen, though it
+does force a layout reflow and may notify a `ResizeObserver`/`IntersectionObserver`
+watching the node) and its live styles are restored immediately afterward. The element's
+real shown `display` is recovered where possible — if the node is hidden by an inline
+`style="display:none"`, dropping it lets the cascade restore the true value (e.g. a
+class's `display: flex`); only when a _stylesheet_ rule hides it is the display
+approximated by the element's tag default (`block`, `inline`, `table`, …), since the
+intended value is then unknowable. Note that a `display: none` on an **ancestor** above
+the captured node is not covered — move the node out or reveal the ancestor yourself.
+Defaults to `false`.
+
 #### styleCaching
 
 Selects how computed-style lookups are cached while cloning, as a speed/accuracy
@@ -522,17 +539,12 @@ need to reach into it for testing.
 - A node hidden by an ancestor's `visibility: hidden` **is** rendered: because you asked
   to capture that node explicitly, the captured root is forced visible (and its
   descendants follow), while any deliberate per-element `visibility: hidden` inside the
-  subtree is still honored. Two related cases are **not** rescued the same way, because
-  they are not inherited and the value is often intentional:
-
-    - **`display: none` on the node you pass** (or an ancestor) — a `display: none`
-      element has no layout box at all, so it measures `0×0`; there is nothing to render.
-      Un-hide it (e.g. move it off-screen with `position: absolute; left: -9999px`) before
-      capturing.
-
-    - **`opacity: 0` on the node you pass** — the capture honors it and comes out fully
-      transparent. Raise the opacity (or override it via the
-      [adjustClonedNode](#adjustclonednode) hook) before rendering if you want it visible.
+  subtree is still honored. Two related cases — a `display: none` or `opacity: 0` on the
+  node you pass — are **not** rescued by default, because they are not inherited and the
+  value is often intentional. Opt in with [ensureShown](#ensureshown) to render those, or
+  un-hide the node yourself first (note that a `display: none` **ancestor** above the
+  captured node is not covered by `ensureShown` — move the node out or reveal the
+  ancestor).
 
 ## Authors
 

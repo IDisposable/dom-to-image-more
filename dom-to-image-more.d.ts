@@ -121,6 +121,13 @@ declare namespace domToImage {
          */
         disableInlineImages?: boolean;
         /**
+         * Force the explicitly-captured root node to be shown even when it is
+         * hidden by its own `display: none` or `opacity: 0` (a `visibility: hidden`
+         * ancestor is always handled). Root-only and opt-in: deliberate hiding of
+         * elements *inside* the captured subtree is left intact. Defaults to false.
+         */
+        ensureShown?: boolean;
+        /**
          * Send authentication credentials with cross-origin (CORS) requests for
          * external resources. Defaults to false.
          */

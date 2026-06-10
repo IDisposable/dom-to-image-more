@@ -38,6 +38,10 @@
         // { url, message, status, willUsePlaceholder }. Purely observational — the
         // render still degrades gracefully (placeholder or empty string).
         onImageError: undefined,
+        // Opt-in: force the explicitly-captured root to be shown even if it is hidden
+        // by its own display:none / opacity:0 (visibility:hidden is always handled).
+        // Root-only; per-element hiding inside the subtree is left intact.
+        ensureShown: false,
     };
 
     const domtoimage = {
@@ -249,8 +253,15 @@
         }
 
         function makeSvgDataUri(clone) {
-            const width = options.width || util.width(node);
-            const height = options.height || util.height(node);
+            const finalizeEnsureShown = revealRootIfHidden(clone);
+            let width;
+            let height;
+            try {
+                width = options.width || util.width(node);
+                height = options.height || util.height(node);
+            } finally {
+                finalizeEnsureShown();
+            }
 
             return Promise.resolve(clone)
                 .then(function (svg) {
@@ -274,6 +285,64 @@
                 .then(function (svg) {
                     return `data:image/svg+xml;charset=utf-8,${svg}`;
                 });
+        }
+
+        // `ensureShown` opt-in: make the explicitly-captured ROOT appear even if it
+        // is hidden by its own `display:none` / `opacity:0` (`visibility:hidden` is
+        // already handled during cloning). Root-only and never on by default — these
+        // values are often deliberate, and per-element hiding inside the subtree is
+        // left intact. `opacity:0` just needs the clone overridden. `display:none` has
+        // no layout box, so the original is briefly revealed *in place* to measure
+        // (synchronous — no paint between set and restore, so no visible flash, though
+        // it does force a reflow); the measured size feeds the SVG and the clone root
+        // takes the element's real revealed display. Returns a finalize() the caller
+        // runs immediately after measuring (guarded with try/finally above).
+        function revealRootIfHidden(clone) {
+            const noop = function () {};
+            if (!options.ensureShown) {
+                return noop;
+            }
+
+            const computed = getComputedStyle(node);
+
+            if (computed.getPropertyValue('opacity') === '0') {
+                clone.style.setProperty('opacity', '1');
+            }
+
+            if (computed.getPropertyValue('display') !== 'none') {
+                return noop;
+            }
+
+            const previousDisplay = node.style.getPropertyValue('display');
+            const previousPriority = node.style.getPropertyPriority('display');
+
+            // Reveal without clobbering the element's intended display. The common
+            // case is an inline `style="display:none"`: just dropping the inline
+            // declaration lets the cascade restore the *real* shown display — e.g. a
+            // class's `display:flex`/`grid` — which a blanket `revert` would have
+            // discarded. If a rule still hides it, force it shown, preferring the
+            // element's own inline display when it had a meaningful one (e.g. inline
+            // `display:flex` defeated by a stylesheet `display:none !important`) and
+            // falling back to `revert` (the UA tag default) only when the intended
+            // display is genuinely unknowable.
+            node.style.removeProperty('display');
+            if (getComputedStyle(node).getPropertyValue('display') === 'none') {
+                const fallback =
+                    previousDisplay && previousDisplay !== 'none'
+                        ? previousDisplay
+                        : 'revert';
+                node.style.setProperty('display', fallback, 'important');
+            }
+
+            return function finalize() {
+                const shown = getComputedStyle(node).getPropertyValue('display');
+                clone.style.setProperty('display', shown === 'none' ? 'block' : shown);
+                if (previousDisplay) {
+                    node.style.setProperty('display', previousDisplay, previousPriority);
+                } else {
+                    node.style.removeProperty('display');
+                }
+            };
         }
     }
 
