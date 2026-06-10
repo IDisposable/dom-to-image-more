@@ -579,6 +579,14 @@ need to reach into it for testing.
   not a flex bug (the styles are reproduced faithfully);
   `pixelRatio: window.devicePixelRatio` can reduce it but won't fully eliminate it.
 
+- **`backdrop-filter` is not rendered.** The property is copied to the clone faithfully,
+  but a `backdrop-filter` blurs/tints whatever is painted _behind_ an element, and the
+  captured node is rasterized inside an isolated SVG `<foreignObject>` with nothing behind
+  it to sample — so there's nothing for the filter to act on and it has no visible effect.
+  This is structural to the SVG-foreignObject technique. (A regular `filter` on the
+  element itself works fine; it's specifically the _backdrop_ variant that can't be
+  reproduced.)
+
 ## Authors
 
 Marc Brooks, Anatolii Saienko (original dom-to-image), Paul Bakaus (original idea), Aidas
