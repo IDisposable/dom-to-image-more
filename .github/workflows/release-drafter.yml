@@ -3,15 +3,15 @@ name: Release Drafter
 
 # yamllint disable-line rule:truthy
 on:
-  push:
-    branches:
-      - main
+    push:
+        branches:
+            - main
 
 jobs:
-  workflows:
-    permissions:
-      # Write permission is required to create a github release
-      contents: write
-      # Write permission is required for autolabeler
-      pull-requests: write
-    uses: hassio-addons/workflows/.github/workflows/release-drafter.yaml@main
+    workflows:
+        permissions:
+            # Write permission is required to create a github release
+            contents: write
+            # Write permission is required for autolabeler
+            pull-requests: write
+        uses: hassio-addons/workflows/.github/workflows/release-drafter.yaml@main

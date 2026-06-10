@@ -50,7 +50,7 @@
             inliner: inliner,
             urlCache: [],
             options: {},
-            copyOptions: copyOptions
+            copyOptions: copyOptions,
         },
     };
 
@@ -718,7 +718,10 @@
 
         function isInstanceOf(value, typeName) {
             const window = getWindow(value);
-            return value instanceof window[typeName] || value instanceof window.parent[typeName];
+            return (
+                value instanceof window[typeName] ||
+                value instanceof window.parent[typeName]
+            );
         }
 
         function isShadowRoot(value) {
@@ -773,9 +776,7 @@
         }
 
         function isShadowSlotElement(value) {
-            return (
-                isInShadowRoot(value) && isInstanceOf(value, 'HTMLSlotElement')
-            );
+            return isInShadowRoot(value) && isInstanceOf(value, 'HTMLSlotElement');
         }
 
         function isSVGElement(value) {
@@ -923,7 +924,8 @@
                             const status = xhr.status;
                             // In local files, status is 0 upon success in Mozilla Firefox
                             if (
-                                (status === 0 && url.toLowerCase().startsWith('file://')) ||
+                                (status === 0 &&
+                                    url.toLowerCase().startsWith('file://')) ||
                                 (status >= 200 && status <= 300 && xhr.response !== null)
                             ) {
                                 const response = xhr.response;
@@ -963,7 +965,12 @@
                         if (placeholder) {
                             resolve(placeholder);
                         } else {
-                            fail('Status:' + xhr.status + ' while fetching resource: ' + url);
+                            fail(
+                                'Status:' +
+                                    xhr.status +
+                                    ' while fetching resource: ' +
+                                    url
+                            );
                         }
                     }
 
