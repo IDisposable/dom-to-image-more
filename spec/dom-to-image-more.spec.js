@@ -10,6 +10,37 @@
     const validPlaceholder =
         'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAAMSURBVBhXY7h79y4ABTICmGnXPbMAAAAASUVORK5CYII=';
 
+    // When the suite is launched with UPDATE_CONTROLS=1 the karma config sets this
+    // flag; instead of asserting against the stored control images, the comparison
+    // helpers POST each freshly-rendered image back to the karma updater middleware,
+    // which overwrites the matching control-image file. Run it in the SAME
+    // environment that validates the suite in CI (font rasterization/DPR differ).
+    const UPDATE_CONTROLS = !!(
+        global.__karma__ &&
+        global.__karma__.config &&
+        global.__karma__.config.updateControls
+    );
+    let currentControlPath = null;
+
+    function writeControlImage(dataUrl) {
+        if (!currentControlPath) {
+            return Promise.reject(
+                new Error('UPDATE_CONTROLS: no control-image path for this test')
+            );
+        }
+        return fetch('/__update_control__', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: currentControlPath, data: dataUrl }),
+        }).then(function (res) {
+            if (!res.ok) {
+                return res.text().then(function (text) {
+                    throw new Error('control update failed: ' + text);
+                });
+            }
+        });
+    }
+
     describe('domtoimage', function () {
         afterEach(purgePage);
 
@@ -53,6 +84,48 @@
                 )
                     .then(() => renderToPng(domNode(), { filterStyles: filterStyles }))
                     .then(check)
+                    .then(done)
+                    .catch(done);
+            });
+
+            it('should clean up wrappers and sandbox when a render fails', function (done) {
+                loadTestPage('small/dom-node.html', 'small/style.css')
+                    .then(function () {
+                        const host = domNode();
+                        // A bare text node forces ensureElement to wrap it, giving
+                        // cleanup something to restore.
+                        host.textContent = 'text to render';
+                        const textNode = host.firstChild;
+
+                        return domtoimage
+                            .toSvg(textNode, {
+                                onclone: function () {
+                                    throw new Error('boom-during-render');
+                                },
+                            })
+                            .then(
+                                function () {
+                                    throw new Error('expected the render to reject');
+                                },
+                                function (err) {
+                                    assert.match(err.message, /boom-during-render/);
+                                    // wrapper span removed, original text node restored
+                                    assert.equal(
+                                        host.firstChild,
+                                        textNode,
+                                        'wrapped node should be restored on failure'
+                                    );
+                                    // no sandbox iframe left behind
+                                    assert.equal(
+                                        document.querySelectorAll(
+                                            '[id^="domtoimage-sandbox"]'
+                                        ).length,
+                                        0,
+                                        'sandbox iframe should be removed on failure'
+                                    );
+                                }
+                            );
+                    })
                     .then(done)
                     .catch(done);
             });
@@ -612,6 +685,13 @@
             });
 
             function compareToControlImage(image) {
+                // Tests that draw a sub-region (e.g. scrolled node) reach the
+                // comparison directly rather than via check(); regenerate from the
+                // re-encoded image so the saved control matches what gets compared.
+                if (UPDATE_CONTROLS) {
+                    return writeControlImage(getImageDataURL(image, 'image/png'));
+                }
+
                 const imageUrl = getImageDataURL(image, 'image/png');
                 const controlUrl = getImageDataURL(controlImage(), 'image/png');
 
@@ -713,6 +793,11 @@
             }
 
             function check(dataUrl) {
+                // In regeneration mode the raw render IS the new control image,
+                // which keeps the original format (PNG or SVG data URL) intact.
+                if (UPDATE_CONTROLS) {
+                    return writeControlImage(dataUrl);
+                }
                 return Promise.resolve(dataUrl)
                     .then(drawDataUrl)
                     .then(compareToControlImage);
@@ -787,7 +872,6 @@
                 assert.deepEqual(parse('url("http://acme.com/file")'), [
                     'http://acme.com/file',
                 ]);
-                // eslint-disable-next-line quotes
                 assert.deepEqual(parse("url(foo.com), url('bar.org')"), [
                     'foo.com',
                     'bar.org',
@@ -1142,6 +1226,125 @@
                 }
             });
 
+            function mockFailingXHR(status) {
+                return function () {
+                    const mockXHR = {
+                        readyState: XMLHttpRequest.UNSENT,
+                        status: 0,
+                        response: null,
+                        onloadend: null,
+                        ontimeout: null,
+                        responseType: '',
+                        timeout: 0,
+                        withCredentials: false,
+                        open: function () {},
+                        send: function () {
+                            setTimeout(() => {
+                                mockXHR.readyState = XMLHttpRequest.DONE;
+                                mockXHR.status = status;
+                                if (mockXHR.onloadend) {
+                                    mockXHR.onloadend();
+                                }
+                            }, 10);
+                        },
+                        setRequestHeader: function () {},
+                    };
+                    return mockXHR;
+                };
+            }
+
+            it('should invoke onImageError (without placeholder) when a fetch fails', function (done) {
+                const originalXHR = global.XMLHttpRequest;
+                try {
+                    domtoimage.impl.copyOptions({});
+                    domtoimage.impl.options.imagePlaceholder = undefined;
+
+                    let reported = null;
+                    domtoimage.impl.options.onImageError = function (info) {
+                        reported = info;
+                    };
+
+                    global.XMLHttpRequest = mockFailingXHR(404);
+
+                    const url = 'http://example.com/onImageError-no-placeholder.png';
+                    domtoimage.impl.util
+                        .getAndEncode(url)
+                        .then(function (resource) {
+                            assert.equal(resource, '');
+                            assert.ok(reported, 'onImageError should have been called');
+                            assert.equal(reported.url, url);
+                            assert.equal(reported.status, 404);
+                            assert.equal(reported.willUsePlaceholder, false);
+                            assert.isString(reported.message);
+                        })
+                        .then(done)
+                        .catch(done);
+                } finally {
+                    // We don't reset onImageError here — the mocked failure fires
+                    // asynchronously (after this synchronous finally), and the next
+                    // test's copyOptions({}) clears it anyway.
+                    global.XMLHttpRequest = originalXHR;
+                }
+            });
+
+            it('should invoke onImageError (willUsePlaceholder) when a placeholder is set', function (done) {
+                const originalXHR = global.XMLHttpRequest;
+                try {
+                    domtoimage.impl.copyOptions({});
+                    domtoimage.impl.options.imagePlaceholder = validPlaceholder;
+
+                    let reported = null;
+                    domtoimage.impl.options.onImageError = function (info) {
+                        reported = info;
+                    };
+
+                    global.XMLHttpRequest = mockFailingXHR(500);
+
+                    const url = 'http://example.com/onImageError-with-placeholder.png';
+                    domtoimage.impl.util
+                        .getAndEncode(url)
+                        .then(function (resource) {
+                            assert.equal(resource, validPlaceholder);
+                            assert.ok(reported, 'onImageError should have been called');
+                            assert.equal(reported.url, url);
+                            assert.equal(reported.status, 500);
+                            assert.equal(reported.willUsePlaceholder, true);
+                        })
+                        .then(done)
+                        .catch(done);
+                } finally {
+                    global.XMLHttpRequest = originalXHR;
+                }
+            });
+
+            it('should not let a throwing onImageError handler break the render', function (done) {
+                const originalXHR = global.XMLHttpRequest;
+                try {
+                    domtoimage.impl.copyOptions({});
+                    domtoimage.impl.options.imagePlaceholder = undefined;
+                    domtoimage.impl.options.onImageError = function () {
+                        throw new Error('boom');
+                    };
+
+                    global.XMLHttpRequest = mockFailingXHR(404);
+
+                    domtoimage.impl.util
+                        .getAndEncode('http://example.com/onImageError-throws.png')
+                        .then(function (resource) {
+                            // The throwing handler is swallowed; the fetch still
+                            // resolves to the empty-string fallback.
+                            assert.equal(resource, '');
+                        })
+                        .then(done)
+                        .catch(done);
+                } finally {
+                    // Leave the throwing handler in place so it actually fires on
+                    // the async failure (proving it's caught); the next test's
+                    // copyOptions({}) clears it before any further fetch.
+                    global.XMLHttpRequest = originalXHR;
+                }
+            });
+
             it('should not use placeholder when HTTP status 0 occurs with a local file', function (done) {
                 const originalXHR = global.XMLHttpRequest;
                 try {
@@ -1217,6 +1420,7 @@
         });
 
         function loadTestPage(html, css, controlImage) {
+            currentControlPath = controlImage || null;
             return loadPage()
                 .then(function (document) {
                     if (!html) return document;

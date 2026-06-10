@@ -34,6 +34,10 @@
         filterStyles: undefined,
         // Callback to filter urls to be downloaded and inlined in the output
         filterUrls: undefined,
+        // Callback invoked when a resource (image/font) cannot be fetched; receives
+        // { url, message, status, willUsePlaceholder }. Purely observational — the
+        // render still degrades gracefully (placeholder or empty string).
+        onImageError: undefined,
     };
 
     const domtoimage = {
@@ -63,14 +67,17 @@
     // support node and browsers
     const ELEMENT_NODE =
         (typeof Node !== 'undefined' ? Node.ELEMENT_NODE : undefined) || 1;
-    const getComputedStyle =
-        (typeof global !== 'undefined' ? global.getComputedStyle : undefined) ||
-        (typeof window !== 'undefined' ? window.getComputedStyle : undefined) ||
-        globalThis.getComputedStyle;
-    const atob =
-        (typeof global !== 'undefined' ? global.atob : undefined) ||
-        (typeof window !== 'undefined' ? window.atob : undefined) ||
-        globalThis.atob;
+    const getComputedStyle = resolveGlobal('getComputedStyle');
+    const atob = resolveGlobal('atob');
+
+    // Resolve a global by name across node/browser/worker contexts.
+    function resolveGlobal(name) {
+        return (
+            (typeof global !== 'undefined' ? global[name] : undefined) ||
+            (typeof window !== 'undefined' ? window[name] : undefined) ||
+            globalThis[name]
+        );
+    }
 
     /**
      * @param {Node} node - The DOM Node object to render
@@ -100,6 +107,7 @@
      *         - @param {Object} data - post payload
      * @param {Function} options.adjustClonedNode - callback for adjustClonedNode eventing (to allow adjusting clone's properties)
      * @param {Function} options.filterStyles - Should return true if passed propertyName should be included in the output
+     * @param {Function} options.onImageError - called when a resource fails to fetch with { url, message, status, willUsePlaceholder }; observational only
      * @return {Promise} - A promise that is fulfilled with a SVG image data URL
      * */
     function toSvg(node, options) {
@@ -117,14 +125,19 @@
             .then(options.disableInlineImages ? Promise.resolve(node) : inlineImages)
             .then(applyOptions)
             .then(makeSvgDataUri)
-            .then(restoreWrappers)
-            .then(clearCache);
+            .finally(cleanup);
 
         function ensureElement(node) {
             if (node.nodeType === ELEMENT_NODE) return node;
 
             const originalChild = node;
             const originalParent = node.parentNode;
+            if (!originalParent) {
+                throw new Error(
+                    'Cannot render a non-element node that is not attached to a parent; ' +
+                        'wrap it in an element or attach it to the document first.'
+                );
+            }
             const wrappingSpan = document.createElement('span');
             originalParent.replaceChild(wrappingSpan, originalChild);
             wrappingSpan.append(node);
@@ -136,20 +149,31 @@
             return wrappingSpan;
         }
 
-        function restoreWrappers(result) {
+        // Runs on both success and failure (via .finally) so a render that rejects
+        // partway can't leak the wrapper spans or the sandbox iframe into the
+        // document, or leave the per-render url cache populated.
+        function cleanup() {
+            restoreWrappers();
+            domtoimage.impl.urlCache = [];
+            removeSandbox();
+        }
+
+        function restoreWrappers() {
             // put the original children back where the wrappers were inserted
             while (restorations.length > 0) {
                 const restoration = restorations.pop();
-                restoration.parent.replaceChild(restoration.child, restoration.wrapper);
+                try {
+                    restoration.parent.replaceChild(
+                        restoration.child,
+                        restoration.wrapper
+                    );
+                } catch (e) {
+                    // The DOM may have been mutated mid-render; restore
+                    // best-effort and never let cleanup throw (it would mask the
+                    // real success value or error).
+                    console.error('domtoimage: failed to restore wrapped node', e);
+                }
             }
-
-            return result;
-        }
-
-        function clearCache(result) {
-            domtoimage.impl.urlCache = [];
-            removeSandbox();
-            return result;
         }
 
         function applyOptions(clone) {
@@ -163,9 +187,7 @@
                 clone.style.height = `${options.height}px`;
             }
             if (options.style) {
-                Object.keys(options.style).forEach(function (property) {
-                    clone.style[property] = options.style[property];
-                });
+                Object.assign(clone.style, options.style);
             }
 
             let onCloneResult = null;
@@ -265,61 +287,14 @@
     }
 
     function copyOptions(options) {
-        // Copy options to impl options for use in impl
-        if (typeof options.copyDefaultStyles === 'undefined') {
-            domtoimage.impl.options.copyDefaultStyles = defaultOptions.copyDefaultStyles;
-        } else {
-            domtoimage.impl.options.copyDefaultStyles = options.copyDefaultStyles;
-        }
-
-        if (typeof options.imagePlaceholder === 'undefined') {
-            domtoimage.impl.options.imagePlaceholder = defaultOptions.imagePlaceholder;
-        } else {
-            domtoimage.impl.options.imagePlaceholder = options.imagePlaceholder;
-        }
-
-        if (typeof options.cacheBust === 'undefined') {
-            domtoimage.impl.options.cacheBust = defaultOptions.cacheBust;
-        } else {
-            domtoimage.impl.options.cacheBust = options.cacheBust;
-        }
-
-        if (typeof options.corsImg === 'undefined') {
-            domtoimage.impl.options.corsImg = defaultOptions.corsImg;
-        } else {
-            domtoimage.impl.options.corsImg = options.corsImg;
-        }
-
-        if (typeof options.useCredentials === 'undefined') {
-            domtoimage.impl.options.useCredentials = defaultOptions.useCredentials;
-        } else {
-            domtoimage.impl.options.useCredentials = options.useCredentials;
-        }
-
-        if (typeof options.useCredentialsFilters === 'undefined') {
-            domtoimage.impl.options.useCredentialsFilters =
-                defaultOptions.useCredentialsFilters;
-        } else {
-            domtoimage.impl.options.useCredentialsFilters = options.useCredentialsFilters;
-        }
-
-        if (typeof options.httpTimeout === 'undefined') {
-            domtoimage.impl.options.httpTimeout = defaultOptions.httpTimeout;
-        } else {
-            domtoimage.impl.options.httpTimeout = options.httpTimeout;
-        }
-
-        if (typeof options.styleCaching === 'undefined') {
-            domtoimage.impl.options.styleCaching = defaultOptions.styleCaching;
-        } else {
-            domtoimage.impl.options.styleCaching = options.styleCaching;
-        }
-
-        if (typeof options.filterUrls === 'undefined') {
-            domtoimage.impl.options.filterUrls = defaultOptions.filterUrls;
-        } else {
-            domtoimage.impl.options.filterUrls = options.filterUrls;
-        }
+        // Copy options to impl options for use in impl, falling back to the
+        // default for any option the caller did not supply.
+        Object.keys(defaultOptions).forEach(function (name) {
+            domtoimage.impl.options[name] =
+                typeof options[name] === 'undefined'
+                    ? defaultOptions[name]
+                    : options[name];
+        });
     }
 
     function draw(domNode, options) {
@@ -843,7 +818,7 @@
             const base = doc.createElement('base');
             doc.head.appendChild(base);
             const a = doc.createElement('a');
-            a.style = offscreen;
+            Object.assign(a.style, offscreen);
             doc.body.appendChild(a);
             base.href = baseUrl;
             a.href = url;
@@ -861,6 +836,12 @@
             }
         }
 
+        // Error-handling contract (intentional, complements images' inline()):
+        // makeImage performs the critical, single-point-of-output conversions —
+        // the final SVG -> raster image (draw) and canvas -> image snapshots — so
+        // a failure here means there is no usable output. It therefore fails fast
+        // (onerror rejects), which lets callers' .catch() see the error instead of
+        // silently producing a blank/garbage image. Do NOT change this to resolve.
         function makeImage(uri) {
             if (uri === 'data:,') {
                 return Promise.resolve();
@@ -878,8 +859,8 @@
                 }
 
                 image.onload = function () {
-                    // Cleanup: remove theimage from the document
-                    document.body.removeChild(svg);
+                    // Cleanup: remove the image from the document.
+                    svg.remove();
 
                     if (window && window.requestAnimationFrame) {
                         // In order to work around a Firefox bug (webcompat/web-bugs#119834) we
@@ -894,14 +875,14 @@
                 };
 
                 image.onerror = (error) => {
-                    // Cleanup: remove the image from the document
-                    document.body.removeChild(svg);
-
+                    // Cleanup: remove the image from the document (no-op if the
+                    // node was already detached).
+                    svg.remove();
                     reject(error);
                 };
 
                 svg.appendChild(image);
-                svg.style = { ...svg.style, ...offscreen };
+                Object.assign(svg.style, offscreen);
                 image.src = uri;
 
                 // Add the SVG to the document body (invisible)
@@ -971,6 +952,7 @@
 
                     function fail(message) {
                         console.error(message);
+                        reportImageError(message, false);
                         resolve('');
                     }
 
@@ -978,6 +960,15 @@
                         const placeholder = domtoimage.impl.options.imagePlaceholder;
 
                         if (placeholder) {
+                            // A placeholder masks the failure visually, but still
+                            // surface it so callers can observe the broken resource.
+                            reportImageError(
+                                'Status:' +
+                                    xhr.status +
+                                    ' while fetching resource: ' +
+                                    url,
+                                true
+                            );
                             resolve(placeholder);
                         } else {
                             fail(
@@ -986,6 +977,24 @@
                                     ' while fetching resource: ' +
                                     url
                             );
+                        }
+                    }
+
+                    function reportImageError(message, willUsePlaceholder) {
+                        const handler = domtoimage.impl.options.onImageError;
+                        if (typeof handler !== 'function') {
+                            return;
+                        }
+                        try {
+                            handler({
+                                url: url,
+                                message: message,
+                                status: xhr.status,
+                                willUsePlaceholder: willUsePlaceholder,
+                            });
+                        } catch (e) {
+                            // Never let an observer break the render.
+                            console.error('onImageError handler threw: ' + e.toString());
                         }
                     }
 
@@ -1064,13 +1073,7 @@
         }
 
         function asArray(arrayLike) {
-            const array = [];
-            const length = arrayLike.length;
-            for (let i = 0; i < length; i++) {
-                array.push(arrayLike[i]);
-            }
-
-            return array;
+            return Array.from(arrayLike);
         }
 
         function escapeXhtml(string) {
@@ -1282,8 +1285,14 @@
                     .then(get || util.getAndEncode)
                     .then(function (dataUrl) {
                         return new Promise(function (resolve) {
+                            // Error-handling contract (intentional, see makeImage):
+                            // embedding a CONTENT image degrades gracefully. There may
+                            // be many of them and any one being broken shouldn't sink
+                            // the whole render, so onerror resolves rather than rejects
+                            // (e.g. an <img src /> with no/invalid source is ignored).
+                            // The fetch failure itself is still surfaced via the
+                            // onImageError option inside getAndEncode.
                             element.onload = resolve;
-                            // for any image with invalid src(such as <img src />), just ignore it
                             element.onerror = resolve;
                             element.src = dataUrl;
                         });
@@ -1547,7 +1556,7 @@
         // render at all with `display: none`, so we have to use `visibility: hidden` with `position: fixed`.
         sandbox = document.createElement('iframe');
         sandbox.id = 'domtoimage-sandbox-' + util.uid();
-        sandbox.style = offscreen;
+        Object.assign(sandbox.style, offscreen);
         document.body.appendChild(sandbox);
 
         return tryTechniques(
@@ -1602,7 +1611,7 @@
 
     function removeSandbox() {
         if (sandbox) {
-            document.body.removeChild(sandbox);
+            sandbox.remove();
             sandbox = null;
         }
 

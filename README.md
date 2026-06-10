@@ -245,6 +245,27 @@ busting. Defaults to false
 A data URL for a placeholder image that will be used when fetching an image fails.
 Defaults to undefined and will throw an error on failed images
 
+#### onImageError
+
+A callback invoked whenever a resource (image or font) cannot be fetched. It receives an
+object `{ url, message, status, willUsePlaceholder }` where `willUsePlaceholder` is `true`
+if `imagePlaceholder` will be substituted and `false` if the resource is dropped (resolved
+to an empty string). This is purely observational — rendering still degrades gracefully —
+and is useful for logging or telemetry of broken resources. A handler that throws is
+caught and logged so it can't break the render. Defaults to undefined.
+
+Sample use:
+
+```javascript
+domtoimage.toPng(node, {
+    onImageError: ({ url, status, willUsePlaceholder }) => {
+        console.warn(`dom-to-image: ${url} failed (status ${status})`, {
+            willUsePlaceholder,
+        });
+    },
+});
+```
+
 #### copyDefaultStyles
 
 Set to true to enable the copying of the default styles of elements. This will make the
@@ -349,8 +370,9 @@ and render on the server._`
 
 ## Dependencies
 
-Uses Object.hasOwn() so needs at least Chrome/Edge 93, Firefox 92, Opera 79. Safari 15.4
-or Node 16.9.0
+The newest language features the code relies on are `globalThis` (ES2020) and
+`Promise.prototype.finally` (ES2018), so it needs at least Chrome 71, Edge 79, Firefox 65,
+Opera 58, Safari 12.1, or Node 12.
 
 ### Source
 
@@ -449,6 +471,14 @@ need to reach into it for testing.
 - at the time of writing, Firefox has a problem with some external stylesheets (see issue
   #13). In such case, the error will be caught and logged.
 
+- By design failed resources are handled at two different levels. A broken **content
+  image** (an `<img>` inside the node you're rendering) degrades gracefully — it's skipped
+  and the rest of the node still renders, and you can observe it via the
+  [onImageError](#onimageerror) callback. But a failure of the **final rasterization**
+  (turning the SVG into a PNG/JPEG/canvas) or a `<canvas>` snapshot is fatal — the
+  returned promise rejects so your `.catch()` can handle it, rather than silently
+  returning a blank image. In short: missing content degrades, a broken output rejects.
+
 ## Authors
 
 Marc Brooks, Anatolii Saienko (original dom-to-image), Paul Bakaus (original idea), Aidas
@@ -461,7 +491,8 @@ DOLCIMASCOLO (packaging), Zee (ZM) @zm-cttae (many major updates), Joshua Walsh
 (shadow slot fix), David Burns @davidburns573 and Yujia Cheng @YujiaCheng1996 (font copy
 optional), Julien Dorra @juliendorra (documentation), Sean Zhang @SeanZhang-eaton (regex
 fixes), Ludovic Bouges @ludovic (style property filter), Roland Ma @RolandMa1986 (URL
-regex)", Kasim Tan @kasimtan, Matthias Zach @matthiaszach (iframe fixes)
+regex)", Kasim Tan @kasimtan, Matthias Zach @matthiaszach (iframe fixes), Kamran Ayub
+@kamranayub (filter URL option)
 
 ## License
 
