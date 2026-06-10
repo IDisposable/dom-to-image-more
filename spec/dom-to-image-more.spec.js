@@ -20,6 +20,18 @@
         global.__karma__.config &&
         global.__karma__.config.updateControls
     );
+    // Tests that compare a render against a stored control image are OS-font-dependent
+    // (ClearType vs FreeType, etc.), so they can't run cross-OS in CI. They are declared
+    // with `itImage(...)` instead of `it(...)`; under LOGIC_ONLY the karma config sets
+    // `logicOnly` and they're skipped, leaving the OS-robust logic subset to run anywhere.
+    const LOGIC_ONLY = !!(
+        global.__karma__ &&
+        global.__karma__.config &&
+        global.__karma__.config.logicOnly
+    );
+    function itImage(title, fn) {
+        return (LOGIC_ONLY ? it.skip : it)(title, fn);
+    }
     let currentControlPath = null;
 
     function writeControlImage(dataUrl) {
@@ -49,7 +61,884 @@
         });
 
         describe('features', function () {
-            it('should handle adjustClonedNode', function (done) {
+            // #151: an element in a non-HTML/SVG/MathML namespace (created via
+            // createElementNS) is a real Element but has no `.style` object, so the
+            // style copy / image inliner threw "Cannot read properties of undefined".
+            // Such nodes are now skipped for styling and still render.
+            it('does not crash on a styleless foreign-namespace element (#151)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        const foreign = document.createElementNS(
+                            'http://example.com/ns',
+                            'thing'
+                        );
+                        foreign.id = 'foreign';
+                        foreign.textContent = 'x';
+                        assert.isUndefined(
+                            foreign.style,
+                            'precondition: the foreign element has no .style'
+                        );
+                        domNode().appendChild(foreign);
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        // Render resolves (no throw) and the node still appears.
+                        assert.include(
+                            decodeURIComponent(svg),
+                            'id="foreign"',
+                            'the styleless element should still be in the output'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // #182: opt-in `pixelRatio` multiplies the rasterized canvas resolution
+            // (composes with `scale`), for crisp high-DPI/Retina output.
+            it('pixelRatio scales the output canvas resolution (#182)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="box" style="width:100px;height:50px;background:red"></div>';
+                        return domtoimage.toCanvas(document.getElementById('box'), {
+                            pixelRatio: 2,
+                        });
+                    })
+                    .then(function (canvas) {
+                        assert.equal(canvas.width, 200, '2x pixelRatio → 2x width');
+                        assert.equal(canvas.height, 100, '2x pixelRatio → 2x height');
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // #182 / #159 / #160: a canvas past the browser size limit silently yields
+            // a partial/blank bitmap. We now clamp the effective scale to fit and warn,
+            // so an oversized capture degrades predictably instead of truncating.
+            it('clamps an oversized canvas and warns (#182)', function (done) {
+                const origWarn = console.warn;
+                let warned = false;
+                console.warn = function () {
+                    warned = true;
+                };
+                function restore() {
+                    console.warn = origWarn;
+                }
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="wide" style="width:17000px;height:20px;background:red"></div>';
+                        return domtoimage.toCanvas(document.getElementById('wide'));
+                    })
+                    .then(function (canvas) {
+                        restore();
+                        assert.isAtMost(
+                            canvas.width,
+                            16384,
+                            'canvas width must be clamped to the limit'
+                        );
+                        assert.isTrue(warned, 'an oversized canvas must warn');
+                    })
+                    .then(done)
+                    .catch(function (e) {
+                        restore();
+                        done(e);
+                    });
+            });
+
+            // #168: flex misalignment in exports was attributed to flexbox handling,
+            // but it only reproduces at fractional devicePixelRatio (Windows 125% scale
+            // or 125% browser zoom) — a sub-pixel re-snapping fidelity limit of the
+            // SVG-foreignObject approach, not a dropped style. At DPR=1 the flex layout
+            // is reproduced faithfully; this guards that the flex styles aren't dropped
+            // and the cloned items lay out identically to the originals.
+            it('reproduces a flex layout faithfully (#168)', function (done) {
+                let liveWidths;
+                let cloneWidths;
+                loadTestPage()
+                    .then(function () {
+                        domNode().style.width = '201px';
+                        domNode().innerHTML =
+                            '<div id="flex" style="display:flex;gap:3px;justify-content:space-between;align-items:center">' +
+                            '<div class="it" style="flex:1;height:20px;background:red"></div>' +
+                            '<div class="it" style="flex:1;height:20px;background:green"></div>' +
+                            '<div class="it" style="flex:1;height:20px;background:blue"></div>' +
+                            '</div>';
+                        liveWidths = measureItemWidths(domNode());
+                        return domtoimage.toSvg(domNode(), {
+                            onclone: function (clone) {
+                                clone.style.position = 'absolute';
+                                clone.style.left = '-9999px';
+                                document.body.appendChild(clone);
+                                cloneWidths = measureItemWidths(clone);
+                                document.body.removeChild(clone);
+                                clone.style.position = '';
+                                clone.style.left = '';
+                                return clone;
+                            },
+                        });
+                    })
+                    .then(function (svg) {
+                        const flex = (decodeURIComponent(svg).match(
+                            /<div id="flex"[^>]*>/
+                        ) || [])[0];
+                        assert.isString(flex, 'flex container should be present');
+                        assert.match(
+                            flex,
+                            /display:\s*flex/,
+                            'display:flex must be preserved'
+                        );
+                        assert.match(
+                            flex,
+                            /(column-)?gap:\s*3px/,
+                            'gap must be preserved'
+                        );
+                        assert.match(
+                            flex,
+                            /justify-content:\s*space-between/,
+                            'justify-content must be preserved'
+                        );
+                        // The clone's flex items must lay out exactly like the originals.
+                        assert.deepEqual(
+                            cloneWidths,
+                            liveWidths,
+                            'cloned flex items must match the live layout'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+
+                function measureItemWidths(root) {
+                    return Array.prototype.map.call(
+                        root.querySelectorAll('.it'),
+                        function (el) {
+                            return Math.round(el.getBoundingClientRect().width * 100);
+                        }
+                    );
+                }
+            });
+
+            // #195: an SVG icon rendered on an element via a CSS mask
+            // (`mask: url(icon.svg); background: currentColor`) came out blank because
+            // the inliner only inlined `background`/`background-image`, leaving the mask
+            // url external — and the standalone output can't fetch external resources.
+            // The inliner now inlines mask urls too.
+            it('inlines a CSS mask-image url (#195)', function (done) {
+                this.timeout(15000);
+                const url = '/base/spec/resources/images/image.png';
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<i id="maskicon" style="display:inline-block;width:20px;height:20px;' +
+                            'background-color:red;-webkit-mask-image:url(' +
+                            url +
+                            ');mask-image:url(' +
+                            url +
+                            ')"></i>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const mask = (decoded.match(/<i id="maskicon"[^>]*>/) || [])[0];
+                        assert.isString(mask, 'masked icon should be in the output');
+                        assert.include(
+                            mask,
+                            'data:image',
+                            'the mask url must be inlined as a data: URL'
+                        );
+                        assert.notInclude(
+                            mask,
+                            'image.png',
+                            'the external mask url must not survive (unfetchable in the output)'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // #149: an icon delivered as an `@font-face` glyph via a `::before`
+            // pseudo-element. The composition works — the web font is embedded and the
+            // pseudo-element's `content` glyph + font-family are captured. (The original
+            // report's failure was an external icon font that couldn't be embedded —
+            // the documented web-font/CORS limitation — not a distinct bug.)
+            it('captures an icon-font glyph from a ::before pseudo-element (#149)', function (done) {
+                this.timeout(15000);
+                const style = document.createElement('style');
+                style.id = 's149';
+                style.textContent =
+                    "@font-face { font-family: 'Ico149'; src: url('/base/test-lib/fontawesome/webfonts/fa-solid-900.woff2') format('woff2'); }" +
+                    '#icon::before { content: "\\2605"; font-family: "Ico149"; font-size: 30px; }';
+                document.head.appendChild(style);
+                function cleanup() {
+                    const el = document.getElementById('s149');
+                    if (el) {
+                        el.remove();
+                    }
+                }
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML = '<span id="icon"></span>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        // The web font must be inlined...
+                        assert.include(
+                            decoded,
+                            'base64',
+                            'the @font-face glyph font must be embedded'
+                        );
+                        // ...and the pseudo-element must keep its glyph + font.
+                        assert.include(
+                            decoded,
+                            'content: "★"',
+                            'the ::before glyph content must be preserved'
+                        );
+                        assert.include(
+                            decoded,
+                            'Ico149',
+                            'the icon font-family must reach the pseudo-element'
+                        );
+                    })
+                    .then(cleanup)
+                    .then(done)
+                    .catch(function (e) {
+                        cleanup();
+                        done(e);
+                    });
+            });
+
+            // #139: an SVG icon used via `<use xlink:href="#id">` referencing a
+            // `<symbol>` defined OUTSIDE the rendered subtree (the Vue/webpack
+            // svg-sprite pattern) was missing from the export. Closed by #215's
+            // collect-and-inject (legacy xlink:href + currentColor preserved).
+            it('renders an out-of-subtree icon-sprite <use xlink:href> (#139)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        const sprite =
+                            '<svg style="display:none" xmlns="http://www.w3.org/2000/svg">' +
+                            '<symbol id="icon-star" viewBox="0 0 10 10">' +
+                            '<path id="starpath" d="M5 0 L6 4 L10 4 L7 6 L8 10 L5 7 L2 10 L3 6 L0 4 L4 4 Z" fill="currentColor"></path>' +
+                            '</symbol></svg>';
+                        document
+                            .querySelector('#test-root')
+                            .insertAdjacentHTML('afterbegin', sprite);
+                        domNode().innerHTML =
+                            '<div style="color:red"><svg class="icon" width="20" height="20" xmlns="http://www.w3.org/2000/svg">' +
+                            '<use xlink:href="#icon-star"></use></svg></div>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        assert.include(
+                            decoded,
+                            'id="icon-star"',
+                            'referenced symbol must be injected'
+                        );
+                        assert.include(
+                            decoded,
+                            'id="starpath"',
+                            "the symbol's contents must be injected"
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // ensureShown must reach the non-root SVG path too: a display:none <g> would
+            // throw in getBBox and render blank otherwise (PR #230 review).
+            it('ensureShown reveals a hidden non-root SVG element', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<svg width="50" height="50" xmlns="http://www.w3.org/2000/svg">' +
+                            '<g id="hg" style="display:none">' +
+                            '<rect x="0" y="0" width="20" height="15" fill="red"></rect>' +
+                            '</g></svg>';
+                        return domtoimage.toSvg(document.getElementById('hg'), {
+                            ensureShown: true,
+                        });
+                    })
+                    .then(function (svg) {
+                        assert.match(
+                            svg,
+                            /<svg[^>]*\swidth="\d\d?"/,
+                            'a revealed <g> must be measured (non-zero size), not blank'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // #205: rendering a non-root SVG element (`<g>`, `<path>`, …) directly used
+            // to reject — the bare element was wrapped in an XHTML <foreignObject> where
+            // it can't render. It is now wrapped in a real <svg> framed by its getBBox,
+            // so it rasterizes. Render the <g> and sample a pixel inside its red rect.
+            it('renders a non-root SVG <g> element (#205)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg">' +
+                            '<g id="grp" transform="translate(10,10)">' +
+                            '<rect x="0" y="0" width="40" height="30" fill="rgb(255,0,0)"></rect>' +
+                            '<circle cx="60" cy="20" r="15" fill="rgb(0,0,255)"></circle>' +
+                            '</g></svg>';
+                        return domtoimage.toPixelData(document.getElementById('grp'));
+                    })
+                    .then(function (pixels) {
+                        assert.isAbove(
+                            pixels.length,
+                            0,
+                            'should produce pixel data, not reject'
+                        );
+                        // bbox is 75x35; sample (5,5) which is inside the red rect.
+                        const i = (5 * 75 + 5) * 4;
+                        assert.isAbove(
+                            pixels[i],
+                            200,
+                            'red channel at the rect should be high'
+                        );
+                        assert.isBelow(
+                            pixels[i + 2],
+                            80,
+                            'blue channel at the rect should be low'
+                        );
+                        assert.isAbove(
+                            pixels[i + 3],
+                            200,
+                            'pixel at the rect should be opaque'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // #191: a CSS `url()` set via options.style (the browser normalizes it to
+            // double quotes) was serialized inside the double-quoted style attribute as
+            // `url(&quot;…&quot;)`. We now emit clean single-quoted `url('…')`.
+            it('emits clean url() quotes for background-image (#191)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML = '<div id="bg">x</div>';
+                        return domtoimage.toSvg(document.getElementById('bg'), {
+                            style: {
+                                'background-image': "url('https://example.com/img.png')",
+                            },
+                        });
+                    })
+                    .then(function (svg) {
+                        const bg = (svg.match(/<div id="bg"[^>]*>/) || [])[0];
+                        assert.isString(bg, 'the styled div should be in the output');
+                        assert.notInclude(
+                            bg,
+                            '&quot;',
+                            'url() quotes must not be HTML-escaped'
+                        );
+                        assert.include(
+                            bg,
+                            "url('https://example.com/img.png')",
+                            'background-image should carry a clean single-quoted url()'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // ensureShown (opt-in): force the explicitly-captured root to appear even
+            // when it is hidden by its own display:none / opacity:0. display:none has no
+            // layout box, so the original is briefly revealed in place to measure, the
+            // size feeds the SVG, and the clone root takes the revealed UA display. The
+            // original must be left exactly as it was.
+            it('ensureShown renders a display:none root and restores the original', function (done) {
+                let original;
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="none" style="display:none">natural sized content</div>';
+                        original = document.getElementById('none');
+                        return domtoimage.toSvg(original, { ensureShown: true });
+                    })
+                    .then(function (svg) {
+                        const root = (svg.match(/<div id="none"[^>]*>/) || [])[0];
+                        assert.isString(root, 'root should be in the output');
+                        // Clone root un-hidden, and the SVG got a real measured size.
+                        assert.notMatch(
+                            root,
+                            /display:\s*none/,
+                            'clone root must not stay display:none'
+                        );
+                        assert.match(
+                            svg,
+                            /<svg[^>]*\swidth="\d/,
+                            'a display:none root must be measured to a real width'
+                        );
+                        // The live original must be untouched.
+                        assert.equal(
+                            original.style.display,
+                            'none',
+                            'the original inline display:none must be restored'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            it('ensureShown reveals an opacity:0 root', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="op" style="opacity:0;width:30px;height:10px">y</div>';
+                        return domtoimage.toSvg(document.getElementById('op'), {
+                            ensureShown: true,
+                        });
+                    })
+                    .then(function (svg) {
+                        const root = (svg.match(/<div id="op"[^>]*>/) || [])[0];
+                        assert.isString(root, 'root should be in the output');
+                        assert.match(
+                            root,
+                            /opacity:\s*1/,
+                            'opacity:0 root must be forced opaque'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // ensureShown must reveal the element's REAL display, not a blanket reset:
+            // an inline `display:none` over a class's `display:flex` should come back as
+            // flex (dropping the inline lets the cascade restore it), not `block`.
+            it('ensureShown restores the real display, not block (#ensureShown flex)', function (done) {
+                const style = document.createElement('style');
+                style.id = 'flex-es';
+                style.textContent = '#flexroot { display: flex; }';
+                document.head.appendChild(style);
+                function cleanup() {
+                    const el = document.getElementById('flex-es');
+                    if (el) {
+                        el.remove();
+                    }
+                }
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="flexroot" style="display:none"><span>a</span></div>';
+                        return domtoimage.toSvg(document.getElementById('flexroot'), {
+                            ensureShown: true,
+                        });
+                    })
+                    .then(function (svg) {
+                        const root = (svg.match(/<div id="flexroot"[^>]*>/) || [])[0];
+                        assert.isString(root, 'root should be in the output');
+                        assert.match(
+                            root,
+                            /display:\s*flex/,
+                            'shown display must be the real flex, not a reverted block'
+                        );
+                    })
+                    .then(cleanup)
+                    .then(done)
+                    .catch(function (e) {
+                        cleanup();
+                        done(e);
+                    });
+            });
+
+            // ensureShown edge: a meaningful inline display defeated by a stylesheet
+            // `display:none !important` should be recovered from the inline value, not
+            // reverted to the UA default.
+            it('ensureShown recovers an inline display under !important none', function (done) {
+                const style = document.createElement('style');
+                style.id = 'imp-es';
+                style.textContent = '#improot { display: none !important; }';
+                document.head.appendChild(style);
+                function cleanup() {
+                    const el = document.getElementById('imp-es');
+                    if (el) {
+                        el.remove();
+                    }
+                }
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="improot" style="display:flex"><span>a</span></div>';
+                        return domtoimage.toSvg(document.getElementById('improot'), {
+                            ensureShown: true,
+                        });
+                    })
+                    .then(function (svg) {
+                        const root = (svg.match(/<div id="improot"[^>]*>/) || [])[0];
+                        assert.isString(root, 'root should be in the output');
+                        assert.match(
+                            root,
+                            /display:\s*flex/,
+                            'must recover the inline flex, not revert to block'
+                        );
+                    })
+                    .then(cleanup)
+                    .then(done)
+                    .catch(function (e) {
+                        cleanup();
+                        done(e);
+                    });
+            });
+
+            // ensureShown is root-only: a deliberately hidden *descendant* stays hidden,
+            // and the flag is opt-in (default off leaves the root hidden).
+            it('ensureShown is root-only and opt-in', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="host">shown' +
+                            '<div id="child" style="display:none">child</div></div>';
+                        return Promise.all([
+                            domtoimage.toSvg(document.getElementById('host'), {
+                                ensureShown: true,
+                            }),
+                            domtoimage.toSvg(document.getElementById('child')),
+                        ]);
+                    })
+                    .then(function (r) {
+                        const child = (r[0].match(/<div id="child"[^>]*>/) || [])[0];
+                        assert.match(
+                            child,
+                            /display:\s*none/,
+                            'a hidden descendant must stay hidden (root-only)'
+                        );
+                        // Without the flag, a display:none root is not measured.
+                        assert.notMatch(
+                            r[1],
+                            /<svg[^>]*\swidth="\d/,
+                            'default (no ensureShown) must not reveal a hidden root'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // #167: capturing a node that sits inside a `visibility:hidden` ancestor
+            // rendered blank — the inherited computed `visibility:hidden` was pinned
+            // onto the captured root and every descendant. The root is now forced
+            // visible (the caller explicitly asked to render it) and inherited
+            // visibility is dropped on descendants so they follow it.
+            it('renders a node captured from inside a visibility:hidden ancestor (#167)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="hiddenParent" style="visibility:hidden">' +
+                            '<div id="target" style="width:40px;height:20px;background:red">' +
+                            '<span id="kid">hi</span></div></div>';
+                        return domtoimage.toSvg(document.getElementById('target'));
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const target = (decoded.match(/<div id="target"[^>]*>/) || [])[0];
+                        const kid = (decoded.match(/<span id="kid"[^>]*>/) || [])[0];
+                        assert.isString(target, 'target should be in the output');
+                        // Root forced visible; descendant must not carry hidden.
+                        assert.notMatch(
+                            target,
+                            /visibility:\s*hidden/,
+                            'captured root must not stay hidden'
+                        );
+                        assert.notMatch(
+                            kid,
+                            /visibility:\s*hidden/,
+                            'descendant must not inherit a pinned hidden'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // #167 guard: a *genuine* per-element `visibility:hidden` inside an
+            // otherwise-visible capture must still be preserved (not blanket-reset).
+            it('preserves an explicit visibility:hidden within a visible capture (#167)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="vis">shown' +
+                            '<span id="gone" style="visibility:hidden">hidden</span>' +
+                            '</div>';
+                        return domtoimage.toSvg(document.getElementById('vis'));
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const gone = (decoded.match(/<span id="gone"[^>]*>/) || [])[0];
+                        assert.isString(gone, 'span should be in the output');
+                        assert.match(
+                            gone,
+                            /visibility:\s*hidden/,
+                            'an explicit visibility:hidden override must be preserved'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // #227 (part 1): UA stylesheets underline `a[href]`. The sandbox builds a
+            // default `<a>` from the tag name alone (no href), so its baseline has no
+            // underline. A page that removes the underline (`a{text-decoration:none}`)
+            // then matched that contextless default, the `none` was dropped, and the
+            // output's UA stylesheet re-applied the underline. Building the default
+            // anchor WITH the href fixes the baseline so the override is preserved.
+            it('preserves a removed underline on a[href] (#227)', function (done) {
+                const style = document.createElement('style');
+                style.id = 'reset-227a';
+                style.textContent = 'a { text-decoration: none; }';
+                document.head.appendChild(style);
+                function cleanup() {
+                    const el = document.getElementById('reset-227a');
+                    if (el) {
+                        el.remove();
+                    }
+                }
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<a id="lnk" href="https://example.com">a link</a>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const anchor = (decoded.match(/<a id="lnk"[^>]*>/) || [])[0];
+                        assert.isString(anchor, 'anchor should be in the output');
+                        // The removed underline must be pinned, otherwise the output
+                        // UA a[href] rule re-underlines the link.
+                        assert.match(
+                            anchor,
+                            /text-decoration(-line)?:\s*none/,
+                            'anchor must pin text-decoration:none so the underline is not re-applied'
+                        );
+                    })
+                    .then(cleanup)
+                    .then(done)
+                    .catch(function (e) {
+                        cleanup();
+                        done(e);
+                    });
+            });
+
+            // #227 (part 2): an element whose UA font-size is relative to its parent
+            // (h1–h6 are N.Nem). When the page overrides it to coincide with both the
+            // context-free sandbox default AND the parent, the diff dropped it — but
+            // the standalone output resolves the UA relative rule against a different
+            // parent font-size, so it diverged. We now always emit font-size for such
+            // elements.
+            it('preserves an overridden font-size on headings (#227)', function (done) {
+                const style = document.createElement('style');
+                style.id = 'reset-227b';
+                // Parent 24px; h2 overridden to 1em (= 24px), which coincides with
+                // the UA-default h2 (1.5em of 16px = 24px) and the parent — the exact
+                // drop case. Without the fix the output h2 re-applies UA 1.5em → 36px.
+                style.textContent =
+                    '#dom-node { font-size: 24px; } #hd { font-size: 1em; }';
+                document.head.appendChild(style);
+                function cleanup() {
+                    const el = document.getElementById('reset-227b');
+                    if (el) {
+                        el.remove();
+                    }
+                }
+                let liveFontSize = '';
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML = '<h2 id="hd">Heading</h2>';
+                        liveFontSize = getComputedStyle(
+                            document.getElementById('hd')
+                        ).getPropertyValue('font-size');
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const h2 = (decoded.match(/<h2 id="hd"[^>]*>/) || [])[0];
+                        assert.isString(h2, 'h2 should be in the output');
+                        assert.match(
+                            h2,
+                            new RegExp(
+                                'font-size:\\s*' + liveFontSize.replace('.', '\\.')
+                            ),
+                            'h2 must pin its overridden font-size (' +
+                                liveFontSize +
+                                ') so the UA 1.5em rule does not re-apply'
+                        );
+                    })
+                    .then(cleanup)
+                    .then(done)
+                    .catch(function (e) {
+                        cleanup();
+                        done(e);
+                    });
+            });
+
+            // #203: a CSS reset like Tailwind Preflight (`*{ border-width:0;
+            // border-style:solid; border-color:#e5e7eb }`) makes border-style/color
+            // differ from the context-free sandbox default (so they're emitted) while
+            // border-width equals the default 0 (so it was dropped). In the standalone
+            // output with no stylesheet, a solid style with no width paints the CSS
+            // initial `medium` (~3px) phantom border on every element. The fix pins the
+            // width whenever a side has a visible style.
+            it('does not paint phantom borders under a border reset (#203)', function (done) {
+                const style = document.createElement('style');
+                style.id = 'reset-203';
+                style.textContent =
+                    '* { border-width: 0; border-style: solid; border-color: rgb(229, 231, 235); }';
+                document.head.appendChild(style);
+
+                function cleanupReset() {
+                    const el = document.getElementById('reset-203');
+                    if (el) {
+                        el.remove();
+                    }
+                }
+
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML = '<div id="inner">hello world</div>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const match = decoded.match(/<div id="inner"[^>]*>/);
+                        assert.isNotNull(match, 'inner div should be in the output');
+                        const inner = match[0];
+                        // The reset makes border-style solid, which alone would paint a
+                        // `medium` border. The width must be pinned to 0 so it doesn't.
+                        if (/border[^;"]*style:\s*solid/.test(inner)) {
+                            assert.match(
+                                inner,
+                                /border(-[a-z]+)?-width:\s*0px/,
+                                'a solid border style must be accompanied by a pinned 0px width'
+                            );
+                        }
+                    })
+                    .then(cleanupReset)
+                    .then(done)
+                    .catch(function (e) {
+                        cleanupReset();
+                        done(e);
+                    });
+            });
+
+            // #215: a <use> that references a <symbol>/element defined OUTSIDE the
+            // rendered subtree would render nothing, because the referenced node was
+            // never cloned. We now collect the target and inject it into the output
+            // SVG so the reference resolves in the standalone image.
+            it('inlines out-of-subtree SVG referenced by <use> (#215)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        const sprite =
+                            '<svg style="display:none" xmlns="http://www.w3.org/2000/svg">' +
+                            '<symbol id="diamond" viewBox="0 0 10 10">' +
+                            '<rect id="symrect" x="2" y="2" width="6" height="6" fill="red"></rect>' +
+                            '</symbol></svg>';
+                        // Sibling of #dom-node, NOT inside it — so it is never cloned.
+                        document
+                            .querySelector('#test-root')
+                            .insertAdjacentHTML('afterbegin', sprite);
+                        domNode().innerHTML =
+                            '<svg width="20" height="20" xmlns="http://www.w3.org/2000/svg">' +
+                            '<use href="#diamond" width="20" height="20"></use></svg>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        // The referenced symbol (and its contents) must be present in
+                        // the standalone output, otherwise <use href="#diamond"> is
+                        // dangling and nothing rasterizes.
+                        assert.include(
+                            decoded,
+                            'id="diamond"',
+                            'referenced <symbol> should be injected into the output'
+                        );
+                        assert.include(
+                            decoded,
+                            'id="symrect"',
+                            "referenced symbol's contents should be injected"
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // #215: when the referenced id already exists inside the rendered
+            // subtree, we must NOT inject a duplicate of it.
+            it('does not duplicate <use> targets already in the subtree (#215)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<svg width="20" height="20" xmlns="http://www.w3.org/2000/svg">' +
+                            '<defs><rect id="inside" x="0" y="0" width="6" height="6" fill="blue"></rect></defs>' +
+                            '<use href="#inside" width="20" height="20"></use></svg>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const occurrences = decoded.split('id="inside"').length - 1;
+                        assert.equal(
+                            occurrences,
+                            1,
+                            'in-subtree target must not be duplicated'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            // #209: a <table>'s computed height is its full element box, but CSS
+            // `height` on a table sizes only the grid box (the <caption> sits outside
+            // it). Copying the computed height back as an inline style made the caption
+            // stack on top of a full-height grid, growing the cloned table by the
+            // caption height and pushing trailing siblings out of the output (clipping
+            // them). The clone's table must lay out at the same height as the original.
+            it('does not grow a captioned table in the clone (#209)', function (done) {
+                let host;
+                let originalTableHeight = -1;
+                let cloneTableHeight = -1;
+                loadTestPage()
+                    .then(function () {
+                        host = domNode();
+                        host.style.width = '200px';
+                        host.innerHTML =
+                            '<table><caption>A Table Caption</caption>' +
+                            '<thead><tr><th>A</th></tr></thead>' +
+                            '<tbody><tr><td>Long text text text text text text text</td></tr></tbody>' +
+                            '</table><div style="color:red">Bottom text</div>';
+                        originalTableHeight = host
+                            .querySelector('table')
+                            .getBoundingClientRect().height;
+                        return domtoimage.toSvg(host, {
+                            onclone: function (clone) {
+                                // Lay the clone out offscreen and measure its table.
+                                clone.style.position = 'absolute';
+                                clone.style.left = '-9999px';
+                                clone.style.top = '0';
+                                document.body.appendChild(clone);
+                                cloneTableHeight = clone
+                                    .querySelector('table')
+                                    .getBoundingClientRect().height;
+                                document.body.removeChild(clone);
+                                clone.style.position = '';
+                                clone.style.left = '';
+                                clone.style.top = '';
+                                return clone;
+                            },
+                        });
+                    })
+                    .then(function () {
+                        // Without the fix the clone's table is taller by the caption
+                        // height (~18px); allow 1px of sub-pixel slack.
+                        assert.isAtMost(
+                            cloneTableHeight,
+                            originalTableHeight + 1,
+                            'cloned captioned table must not grow taller than the original'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            itImage('should handle adjustClonedNode', function (done) {
                 function oncloned(_node, clone, after) {
                     /* jshint unused:false */
                     if (!after) {
@@ -71,7 +960,7 @@
                     .catch(done);
             });
 
-            it('should handle filterStyles', function (done) {
+            itImage('should handle filterStyles', function (done) {
                 function filterStyles(_node, propertyName) {
                     /* jshint unused:false */
                     return propertyName !== 'background-color';
@@ -130,7 +1019,7 @@
                     .catch(done);
             });
 
-            it('should render to svg', function (done) {
+            itImage('should render to svg', function (done) {
                 loadTestPage(
                     'small/dom-node.html',
                     'small/style.css',
@@ -142,7 +1031,7 @@
                     .catch(done);
             });
 
-            it('should render to png', function (done) {
+            itImage('should render to png', function (done) {
                 loadTestPage(
                     'small/dom-node.html',
                     'small/style.css',
@@ -154,7 +1043,7 @@
                     .catch(done);
             });
 
-            it('should handle border', function (done) {
+            itImage('should handle border', function (done) {
                 loadTestPage(
                     'border/dom-node.html',
                     'border/style.css',
@@ -165,7 +1054,7 @@
                     .catch(done);
             });
 
-            it('should render to jpeg', function (done) {
+            itImage('should render to jpeg', function (done) {
                 loadTestPage(
                     'small/dom-node.html',
                     'small/style.css',
@@ -177,19 +1066,22 @@
                     .catch(done);
             });
 
-            it('should use quality parameter when rendering to jpeg', function (done) {
-                loadTestPage(
-                    'small/dom-node.html',
-                    'small/style.css',
-                    'small/control-image-jpeg-low'
-                )
-                    .then(() => renderToJpeg(null, { quality: 0.5 }))
-                    .then(check)
-                    .then(done)
-                    .catch(done);
-            });
+            itImage(
+                'should use quality parameter when rendering to jpeg',
+                function (done) {
+                    loadTestPage(
+                        'small/dom-node.html',
+                        'small/style.css',
+                        'small/control-image-jpeg-low'
+                    )
+                        .then(() => renderToJpeg(null, { quality: 0.5 }))
+                        .then(check)
+                        .then(done)
+                        .catch(done);
+                }
+            );
 
-            it('should render to blob', function (done) {
+            itImage('should render to blob', function (done) {
                 loadTestPage(
                     'small/dom-node.html',
                     'small/style.css',
@@ -204,7 +1096,7 @@
                     .catch(done);
             });
 
-            it('should render bigger node', function (done) {
+            itImage('should render bigger node', function (done) {
                 loadTestPage(
                     'bigger/dom-node.html',
                     'bigger/style.css',
@@ -222,7 +1114,7 @@
                     .catch(done);
             });
 
-            it('should handle "#" in colors and attributes', function (done) {
+            itImage('should handle "#" in colors and attributes', function (done) {
                 loadTestPage(
                     'hash/dom-node.html',
                     'hash/style.css',
@@ -233,7 +1125,7 @@
                     .catch(done);
             });
 
-            it('should render nested svg with broken namespace', function (done) {
+            itImage('should render nested svg with broken namespace', function (done) {
                 loadTestPage(
                     'svg-ns/dom-node.html',
                     'svg-ns/style.css',
@@ -244,7 +1136,7 @@
                     .catch(done);
             });
 
-            it('should render svg <rect> with width and height', function (done) {
+            itImage('should render svg <rect> with width and height', function (done) {
                 loadTestPage(
                     'svg-rect/dom-node.html',
                     'svg-rect/style.css',
@@ -255,7 +1147,7 @@
                     .catch(done);
             });
 
-            it('should render whole node when its scrolled', function (done) {
+            itImage('should render whole node when its scrolled', function (done) {
                 let domNode;
                 loadTestPage(
                     'scroll/dom-node.html',
@@ -314,7 +1206,7 @@
                     .catch(done);
             });
 
-            it('should use node filter', function (done) {
+            itImage('should use node filter', function (done) {
                 function filter(node) {
                     if (node.classList) {
                         return !node.classList.contains('omit');
@@ -333,7 +1225,7 @@
                     .catch(done);
             });
 
-            it('should not apply node filter to root node', function (done) {
+            itImage('should not apply node filter to root node', function (done) {
                 function filter(node) {
                     if (node.classList) {
                         return node.classList.contains('include');
@@ -352,7 +1244,7 @@
                     .catch(done);
             });
 
-            it('should render with external stylesheet', function (done) {
+            itImage('should render with external stylesheet', function (done) {
                 loadTestPage(
                     'sheet/dom-node.html',
                     'sheet/style.css',
@@ -363,7 +1255,7 @@
                     .catch(done);
             });
 
-            it('should render web fonts', function (done) {
+            itImage('should render web fonts', function (done) {
                 this.timeout(5000);
                 loadTestPage(
                     'fonts/dom-node.html',
@@ -375,7 +1267,7 @@
                     .catch(done);
             });
 
-            it('should not copy web font', function (done) {
+            itImage('should not copy web font', function (done) {
                 this.timeout(5000);
                 loadTestPage(
                     'fonts/dom-node.html',
@@ -398,7 +1290,7 @@
                     .catch(done);
             });
 
-            it('should render active image in srcset', function (done) {
+            itImage('should render active image in srcset', function (done) {
                 this.timeout(30000);
                 loadTestPage(
                     'srcset/dom-node.html',
@@ -411,7 +1303,7 @@
                     .catch(done);
             });
 
-            it('should render background images', function (done) {
+            itImage('should render background images', function (done) {
                 loadTestPage(
                     'css-bg/dom-node.html',
                     'css-bg/style.css',
@@ -422,7 +1314,7 @@
                     .catch(done);
             });
 
-            it('should render iframe of street view', function (done) {
+            itImage('should render iframe of street view', function (done) {
                 this.timeout(60000);
                 loadTestPage(
                     'iframe/street-view.html',
@@ -488,7 +1380,7 @@
                     .catch(done);
             });
 
-            it('should render bgcolor', function (done) {
+            itImage('should render bgcolor', function (done) {
                 loadTestPage(
                     'bgcolor/dom-node.html',
                     'bgcolor/style.css',
@@ -500,7 +1392,7 @@
                     .catch(done);
             });
 
-            it('should render bgcolor in SVG', function (done) {
+            itImage('should render bgcolor in SVG', function (done) {
                 loadTestPage(
                     'bgcolor/dom-node.html',
                     'bgcolor/style.css',
@@ -555,41 +1447,47 @@
                     .catch(done);
             });
 
-            it('should apply width and height options to node copy being rendered', function (done) {
-                loadTestPage(
-                    'dimensions/dom-node.html',
-                    'dimensions/style.css',
-                    'dimensions/control-image'
-                )
-                    .then(() => renderToPng(domNode(), { width: 200, height: 200 }))
-                    .then(function (dataUrl) {
-                        return drawDataUrl(dataUrl, { width: 200, height: 200 });
-                    })
-                    .then(compareToControlImage)
-                    .then(done)
-                    .catch(done);
-            });
-
-            it('should apply style text to node copy being rendered', function (done) {
-                loadTestPage(
-                    'style/dom-node.html',
-                    'style/style.css',
-                    'style/control-image'
-                )
-                    .then(() =>
-                        renderToPng(domNode(), {
-                            style: {
-                                'background-color': 'red',
-                                'transform': 'scale(0.5)',
-                            },
-                        })
+            itImage(
+                'should apply width and height options to node copy being rendered',
+                function (done) {
+                    loadTestPage(
+                        'dimensions/dom-node.html',
+                        'dimensions/style.css',
+                        'dimensions/control-image'
                     )
-                    .then(check)
-                    .then(done)
-                    .catch(done);
-            });
+                        .then(() => renderToPng(domNode(), { width: 200, height: 200 }))
+                        .then(function (dataUrl) {
+                            return drawDataUrl(dataUrl, { width: 200, height: 200 });
+                        })
+                        .then(compareToControlImage)
+                        .then(done)
+                        .catch(done);
+                }
+            );
 
-            it('should apply handle background-clip:text', function (done) {
+            itImage(
+                'should apply style text to node copy being rendered',
+                function (done) {
+                    loadTestPage(
+                        'style/dom-node.html',
+                        'style/style.css',
+                        'style/control-image'
+                    )
+                        .then(() =>
+                            renderToPng(domNode(), {
+                                style: {
+                                    'background-color': 'red',
+                                    'transform': 'scale(0.5)',
+                                },
+                            })
+                        )
+                        .then(check)
+                        .then(done)
+                        .catch(done);
+                }
+            );
+
+            itImage('should apply handle background-clip:text', function (done) {
                 loadTestPage(
                     'background-clip/dom-node.html',
                     'background-clip/style.css',
@@ -601,7 +1499,7 @@
                     .catch(done);
             });
 
-            it('should combine dimensions and style', function (done) {
+            itImage('should combine dimensions and style', function (done) {
                 loadTestPage(
                     'scale/dom-node.html',
                     'scale/style.css',
@@ -625,7 +1523,7 @@
                     .catch(done);
             });
 
-            it('should render svg style attributes', function (done) {
+            itImage('should render svg style attributes', function (done) {
                 loadTestPage(
                     'svg-styles/dom-node.html',
                     'svg-styles/style.css',
@@ -637,7 +1535,7 @@
                     .catch(done);
             });
 
-            it('should render defaults styles when reset', function (done) {
+            itImage('should render defaults styles when reset', function (done) {
                 this.timeout(30000);
                 loadTestPage(
                     'defaultStyles/defaultStyles.html',
@@ -650,7 +1548,7 @@
                     .catch(done);
             });
 
-            it('should honor zero-padding table elements', function (done) {
+            itImage('should honor zero-padding table elements', function (done) {
                 loadTestPage(
                     'padding/dom-node.html',
                     'padding/style.css',
@@ -661,19 +1559,22 @@
                     .catch(done);
             });
 
-            it('should render open shadow DOM roots with assigned nodes intact', function (done) {
-                this.timeout(60000);
-                loadTestPage(
-                    'shadow-dom/dom-node.html',
-                    'shadow-dom/styles.css',
-                    'shadow-dom/control-image'
-                )
-                    .then(renderToPngAndCheck)
-                    .then(done)
-                    .catch(done);
-            });
+            itImage(
+                'should render open shadow DOM roots with assigned nodes intact',
+                function (done) {
+                    this.timeout(60000);
+                    loadTestPage(
+                        'shadow-dom/dom-node.html',
+                        'shadow-dom/styles.css',
+                        'shadow-dom/control-image'
+                    )
+                        .then(renderToPngAndCheck)
+                        .then(done)
+                        .catch(done);
+                }
+            );
 
-            it('should not get fooled by math elements', function (done) {
+            itImage('should not get fooled by math elements', function (done) {
                 loadTestPage('math/dom-node.html', null, 'math/control-image')
                     .then(() => renderToPng(domNode(), { width: 500, height: 100 }))
                     .then(function (dataUrl) {

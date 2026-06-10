@@ -2,9 +2,9 @@ name: build
 
 on:
     push:
-        branches: [main, v2.x]
+        branches: [main, v2.x, v3.x]
     pull_request:
-        branches: [main, v2.x]
+        branches: [main, v2.x, v3.x]
 
 jobs:
     build:
@@ -12,7 +12,7 @@ jobs:
 
         strategy:
             matrix:
-                node-version: [20.x]
+                node-version: [20.x, 22.x]
 
         steps:
             - uses: actions/checkout@v3
@@ -21,7 +21,11 @@ jobs:
               with:
                   node-version: ${{ matrix.node-version }}
             - name: Setup Chrome
+              id: setup-chrome
               uses: browser-actions/setup-chrome@v1
+            - name: Setup Firefox
+              id: setup-firefox
+              uses: browser-actions/setup-firefox@v1
             - name: Check dependencies
               run: npm ci --dry-run
             - name: Install dependencies
@@ -30,3 +34,11 @@ jobs:
               run: npm run test:types
             - name: Run build only
               run: npm run build:ci
+            - name: Run logic tests (Chrome)
+              run: npm run test:logic
+              env:
+                  CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+            - name: Run logic tests (Firefox)
+              run: npm run test:logic:firefox
+              env:
+                  FIREFOX_BIN: ${{ steps.setup-firefox.outputs.firefox-path }}

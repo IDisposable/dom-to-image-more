@@ -38,6 +38,15 @@
         // { url, message, status, willUsePlaceholder }. Purely observational — the
         // render still degrades gracefully (placeholder or empty string).
         onImageError: undefined,
+        // Opt-in: force the explicitly-captured root to be shown even if it is hidden
+        // by its own display:none / opacity:0 (visibility:hidden is always handled).
+        // Root-only; per-element hiding inside the subtree is left intact.
+        ensureShown: false,
+        // Device-pixel-ratio multiplier for the rasterized canvas output (png/jpeg/
+        // blob/canvas). Defaults to 1 (CSS pixels, unchanged). Set to
+        // window.devicePixelRatio for crisp high-DPI/Retina output. Composes with
+        // `scale` (effective multiplier = scale * pixelRatio).
+        pixelRatio: 1,
     };
 
     const domtoimage = {
@@ -94,6 +103,7 @@
      * @param {Number} options.quality - a Number between 0 and 1 indicating image quality (applicable to JPEG only),
                 defaults to 1.0.
      * @param {Number} options.scale - a Number multiplier to scale up the canvas before rendering to reduce fuzzy images, defaults to 1.0.
+     * @param {Number} options.pixelRatio - device-pixel-ratio multiplier for the rasterized canvas (png/jpeg/blob/canvas); set to window.devicePixelRatio for crisp high-DPI output. Composes with scale. Defaults to 1.0.
      * @param {String} options.imagePlaceholder - dataURL to use as a placeholder for failed images, default behaviour is to fail fast on images we can't fetch
      * @param {Boolean} options.cacheBust - set to true to cache bust by appending the time to the request url
      * @param {String} options.styleCaching - set to 'strict', 'relaxed' to select style caching rules
@@ -116,11 +126,14 @@
         domtoimage.impl.copyOptions(options);
         const restorations = [];
 
+        svgRefsToInline = [];
+
         return Promise.resolve(node)
             .then(ensureElement)
             .then(function (clonee) {
                 return cloneNode(clonee, options, null, ownerWindow);
             })
+            .then(injectSvgRefs)
             .then(options.disableEmbedFonts ? Promise.resolve(node) : embedFonts)
             .then(options.disableInlineImages ? Promise.resolve(node) : inlineImages)
             .then(applyOptions)
@@ -155,7 +168,51 @@
         function cleanup() {
             restoreWrappers();
             domtoimage.impl.urlCache = [];
+            svgRefsToInline = [];
             removeSandbox();
+        }
+
+        // Prepend a hidden <svg><defs> holding any out-of-subtree elements that
+        // <use> nodes referenced (issue #215), so the standalone clone is
+        // self-contained. Ids already present in the clone are skipped to avoid
+        // duplicates. Returns the clone unchanged so the chain flows through.
+        function injectSvgRefs(clone) {
+            if (svgRefsToInline.length === 0) {
+                return clone;
+            }
+            const NS = 'http://www.w3.org/2000/svg';
+            const holder = document.createElementNS(NS, 'svg');
+            holder.setAttribute('xmlns', NS);
+            holder.setAttribute('width', '0');
+            holder.setAttribute('height', '0');
+            holder.style.setProperty('position', 'absolute');
+            holder.style.setProperty('width', '0');
+            holder.style.setProperty('height', '0');
+            holder.style.setProperty('overflow', 'hidden');
+            const defs = document.createElementNS(NS, 'defs');
+            holder.appendChild(defs);
+
+            const existingIds = new Set();
+            if (clone.getAttribute('id')) {
+                existingIds.add(clone.getAttribute('id'));
+            }
+            clone.querySelectorAll('[id]').forEach(function (el) {
+                existingIds.add(el.getAttribute('id'));
+            });
+
+            let injected = 0;
+            svgRefsToInline.forEach(function (ref) {
+                if (existingIds.has(ref.id)) {
+                    return; // already in the clone
+                }
+                defs.appendChild(ref.node);
+                injected += 1;
+            });
+
+            if (injected > 0) {
+                clone.insertBefore(holder, clone.firstChild);
+            }
+            return clone;
         }
 
         function restoreWrappers() {
@@ -202,14 +259,29 @@
         }
 
         function makeSvgDataUri(clone) {
-            const width = options.width || util.width(node);
-            const height = options.height || util.height(node);
+            // A non-root SVG element (`<g>`, `<path>`, `<circle>`, …) is meaningless
+            // inside an XHTML `<foreignObject>` and fails to rasterize (issue #205).
+            // Wrap it in a real synthesized `<svg>` framed by its bounding box instead.
+            if (util.isSVGElement(node) && !util.isSVGSVGElement(node)) {
+                return makeNonRootSvgDataUri(clone);
+            }
+
+            const finalizeEnsureShown = revealRootIfHidden(clone);
+            let width;
+            let height;
+            try {
+                width = options.width || util.width(node);
+                height = options.height || util.height(node);
+            } finally {
+                finalizeEnsureShown();
+            }
 
             return Promise.resolve(clone)
                 .then(function (svg) {
                     svg.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
                     return new XMLSerializer().serializeToString(svg);
                 })
+                .then(normalizeCssUrlQuotes)
                 .then(util.escapeXhtml)
                 .then(function (xhtml) {
                     const foreignObjectSizing =
@@ -227,6 +299,129 @@
                 .then(function (svg) {
                     return `data:image/svg+xml;charset=utf-8,${svg}`;
                 });
+        }
+
+        // Render a non-root SVG element (`<g>`, `<path>`, …) by wrapping its clone in a
+        // freshly synthesized `<svg>` framed by the original's `getBBox()` (issue #205).
+        // No `<foreignObject>` and no XHTML namespace — the element is real SVG content.
+        // The element's own positioning transform placed it within its *original* svg
+        // and is meaningless once extracted, so it is dropped and the bbox `x/y` drives
+        // the `viewBox` so the geometry frames exactly. Falls back to a 0 box if getBBox
+        // is unavailable (detached / `display:none`). `ensureShown` is honored here too,
+        // so a hidden `<g>`/`<path>` root is revealed before measuring (otherwise getBBox
+        // throws on a `display:none` element and the capture comes out blank).
+        function makeNonRootSvgDataUri(clone) {
+            const SVG_NS = 'http://www.w3.org/2000/svg';
+            const finalizeEnsureShown = revealRootIfHidden(clone);
+            let box;
+            try {
+                box = node.getBBox();
+            } catch (_e) {
+                box = { x: 0, y: 0, width: 0, height: 0 };
+            } finally {
+                finalizeEnsureShown();
+            }
+
+            clone.removeAttribute('transform');
+            clone.style.removeProperty('transform');
+
+            const width = options.width || box.width;
+            const height = options.height || box.height;
+
+            return Promise.resolve(clone)
+                .then(function (svgEl) {
+                    svgEl.setAttribute('xmlns', SVG_NS);
+                    return new XMLSerializer().serializeToString(svgEl);
+                })
+                .then(normalizeCssUrlQuotes)
+                .then(util.escapeXhtml)
+                .then(function (inner) {
+                    const sizing =
+                        (util.isDimensionMissing(width) ? '' : ` width="${width}"`) +
+                        (util.isDimensionMissing(height) ? '' : ` height="${height}"`);
+                    const viewBox = `${box.x} ${box.y} ${box.width} ${box.height}`;
+                    return `<svg xmlns="${SVG_NS}"${sizing} viewBox="${viewBox}">${inner}</svg>`;
+                })
+                .then(function (svg) {
+                    return `data:image/svg+xml;charset=utf-8,${svg}`;
+                });
+        }
+
+        // Browsers normalize CSS `url()` values to double quotes, so setting one via
+        // the live style (options.style, inlined images, copied computed styles) and
+        // then serializing it inside the double-quoted `style="…"` attribute escapes
+        // those quotes to `&quot;` — valid, but surprising and reported as broken
+        // (issue #191). Rewrite `url(&quot;X&quot;)` to single-quoted `url('X')` for
+        // clean, conventional output. Single quotes don't collide with the attribute
+        // delimiter, so they survive serialization unescaped. Left as-is when X itself
+        // contains a single quote (the `&quot;` form is still correct there). Runs on
+        // the serialized string because the live style object always re-normalizes
+        // back to double quotes, so it can't be fixed before serializing.
+        function normalizeCssUrlQuotes(serialized) {
+            return serialized.replace(
+                /url\(&quot;([^]*?)&quot;\)/g,
+                function (match, inner) {
+                    return inner.indexOf("'") >= 0 ? match : `url('${inner}')`;
+                }
+            );
+        }
+
+        // `ensureShown` opt-in: make the explicitly-captured ROOT appear even if it
+        // is hidden by its own `display:none` / `opacity:0` (`visibility:hidden` is
+        // already handled during cloning). Root-only and never on by default — these
+        // values are often deliberate, and per-element hiding inside the subtree is
+        // left intact. `opacity:0` just needs the clone overridden. `display:none` has
+        // no layout box, so the original is briefly revealed *in place* to measure
+        // (synchronous — no paint between set and restore, so no visible flash, though
+        // it does force a reflow); the measured size feeds the SVG and the clone root
+        // takes the element's real revealed display. Returns a finalize() the caller
+        // runs immediately after measuring (guarded with try/finally above).
+        function revealRootIfHidden(clone) {
+            const noop = function () {};
+            if (!options.ensureShown) {
+                return noop;
+            }
+
+            const computed = getComputedStyle(node);
+
+            if (computed.getPropertyValue('opacity') === '0') {
+                clone.style.setProperty('opacity', '1');
+            }
+
+            if (computed.getPropertyValue('display') !== 'none') {
+                return noop;
+            }
+
+            const previousDisplay = node.style.getPropertyValue('display');
+            const previousPriority = node.style.getPropertyPriority('display');
+
+            // Reveal without clobbering the element's intended display. The common
+            // case is an inline `style="display:none"`: just dropping the inline
+            // declaration lets the cascade restore the *real* shown display — e.g. a
+            // class's `display:flex`/`grid` — which a blanket `revert` would have
+            // discarded. If a rule still hides it, force it shown, preferring the
+            // element's own inline display when it had a meaningful one (e.g. inline
+            // `display:flex` defeated by a stylesheet `display:none !important`) and
+            // falling back to `revert` (the UA tag default) only when the intended
+            // display is genuinely unknowable.
+            node.style.removeProperty('display');
+            if (getComputedStyle(node).getPropertyValue('display') === 'none') {
+                const fallback =
+                    previousDisplay && previousDisplay !== 'none'
+                        ? previousDisplay
+                        : 'revert';
+                node.style.setProperty('display', fallback, 'important');
+            }
+
+            return function finalize() {
+                const shown = getComputedStyle(node).getPropertyValue('display');
+                clone.style.setProperty('display', shown === 'none' ? 'block' : shown);
+                if (previousDisplay) {
+                    node.style.setProperty('display', previousDisplay, previousPriority);
+                } else {
+                    node.style.removeProperty('display');
+                }
+            };
         }
     }
 
@@ -302,8 +497,9 @@
         return toSvg(domNode, options)
             .then(util.makeImage)
             .then(function (image) {
-                const scale = typeof options.scale !== 'number' ? 1 : options.scale;
-                const canvas = newCanvas(domNode, scale);
+                const result = newCanvas(domNode);
+                const canvas = result.canvas;
+                const scale = result.scale;
                 const ctx = canvas.getContext('2d');
                 ctx.msImageSmoothingEnabled = false;
                 ctx.imageSmoothingEnabled = false;
@@ -314,7 +510,7 @@
                 return canvas;
             });
 
-        function newCanvas(node, scale) {
+        function newCanvas(node) {
             let width = options.width || util.width(node);
             let height = options.height || util.height(node);
 
@@ -328,6 +524,14 @@
                 height = width / 2.0;
             }
 
+            // Effective resolution multiplier. Both default to 1, so the default
+            // output is unchanged; `pixelRatio: window.devicePixelRatio` opts into
+            // crisp high-DPI output, and `scale` remains an explicit upscale.
+            const requestedScale =
+                (typeof options.scale === 'number' ? options.scale : 1) *
+                (typeof options.pixelRatio === 'number' ? options.pixelRatio : 1);
+            const scale = clampScaleToCanvasLimit(width, height, requestedScale);
+
             const canvas = document.createElement('canvas');
             canvas.width = width * scale;
             canvas.height = height * scale;
@@ -338,11 +542,58 @@
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
             }
 
-            return canvas;
+            return { canvas: canvas, scale: scale };
         }
     }
 
+    // Browsers cap canvas size; beyond the cap a canvas silently produces a blank or
+    // partial bitmap (issue #182 "incomplete on Retina", and the #159/#160 crash/crop
+    // family). When the requested `width * height * scale` canvas would exceed a
+    // conservative limit, clamp the scale to fit and warn — degrading predictably
+    // instead of truncating silently. Returns the original scale when it already fits.
+    function clampScaleToCanvasLimit(width, height, scale) {
+        // Conservative cross-browser bounds: max single dimension and max area.
+        const MAX_DIMENSION = 16384;
+        const MAX_AREA = MAX_DIMENSION * MAX_DIMENSION;
+
+        // All three must be positive finite numbers; written this way (rather than
+        // `<= 0`) so NaN is also rejected, since `NaN <= 0` is false.
+        const allPositive = width > 0 && height > 0 && scale > 0;
+        if (!allPositive) {
+            return scale;
+        }
+
+        const limit = Math.min(
+            MAX_DIMENSION / width,
+            MAX_DIMENSION / height,
+            Math.sqrt(MAX_AREA / (width * height))
+        );
+
+        if (scale <= limit) {
+            return scale;
+        }
+
+        console.warn(
+            'dom-to-image-more: the requested ' +
+                Math.round(width * scale) +
+                '×' +
+                Math.round(height * scale) +
+                ' canvas exceeds the browser limit; clamping the effective scale from ' +
+                scale +
+                ' to ' +
+                limit +
+                '. Capture detail may be reduced — render a smaller region or lower scale/pixelRatio.'
+        );
+        return limit;
+    }
+
     let sandbox = null;
+
+    // Referenced SVG defs (e.g. a <symbol> a <use> points at) that live OUTSIDE the
+    // rendered subtree. Collected during cloning and injected into the root clone so
+    // the standalone output SVG is self-contained and `<use href="#id">` resolves
+    // (issue #215). Keyed by id; reset per render.
+    let svgRefsToInline = [];
 
     function cloneNode(node, options, parentComputedStyles, ownerWindow) {
         const filter = options.filter;
@@ -452,6 +703,7 @@
                 .then(clonePseudoElements)
                 .then(copyUserInput)
                 .then(fixSvg)
+                .then(fixTableCaption)
                 .then(fixResponsiveImages)
                 .then(function () {
                     return clone;
@@ -501,7 +753,47 @@
             }
 
             function cloneStyle() {
+                // Some exotic elements are real Elements but expose no `.style`
+                // object — e.g. an element in a non-HTML/SVG/MathML namespace created
+                // via `createElementNS`. There's nothing to copy styles onto, and
+                // touching `.style` would throw "Cannot read properties of undefined"
+                // (issue #151). Skip styling such a node; its structure still clones.
+                if (!clone.style) {
+                    return;
+                }
                 copyStyle(original, clone);
+                fixInheritedVisibility();
+
+                // `visibility` is inherited, but the style copy pins each element's
+                // *computed* value. So an element that is hidden only because an
+                // ancestor is `visibility:hidden` ends up with an explicit
+                // `visibility:hidden` of its own — and so does the captured root.
+                // Rendering a node from inside a hidden subtree then comes out blank
+                // (issue #167). Fix: on the captured root (no parent), force it visible
+                // — the caller explicitly asked to render it; on descendants, drop
+                // visibility when it merely equals the parent's (i.e. inherited) so it
+                // follows the now-visible root, while keeping genuine per-element
+                // overrides (visible-inside-hidden, or hidden-inside-visible). Covers
+                // both the fast-path and the cssText path.
+                function fixInheritedVisibility() {
+                    const sourceVisibility =
+                        getComputedStyle(original).getPropertyValue('visibility');
+
+                    if (parentComputedStyles === null) {
+                        // 'hidden' or 'collapse' (collapse renders like hidden off
+                        // tables) — both blank the explicitly-captured root.
+                        if (sourceVisibility !== 'visible') {
+                            clone.style.setProperty('visibility', 'visible');
+                        }
+                        return;
+                    }
+
+                    const parentVisibility =
+                        parentComputedStyles.getPropertyValue('visibility');
+                    if (sourceVisibility === parentVisibility) {
+                        clone.style.removeProperty('visibility');
+                    }
+                }
 
                 function copyFont(source, target) {
                     target.font = source.font;
@@ -625,7 +917,69 @@
                             }
                         });
                     }
+
+                    if (util.isSVGUseElement(clone)) {
+                        collectUseReference(original);
+                    }
                 }
+            }
+
+            // A `<table>`'s computed height is its full element box, but the CSS
+            // `height` property on a table sizes only the *grid box* (the rows) — a
+            // `<caption>` is laid out outside that box. So copying the computed height
+            // back onto the clone as an inline style makes the caption stack on top of
+            // an already-full-height grid, growing the table by the caption's height and
+            // pushing trailing siblings out of the (correctly-sized) output, which clips
+            // them (issue #209). Dropping the explicit height lets the grid size itself
+            // from the faithfully-cloned row heights, with the caption outside as it is
+            // in the live page. Scoped to captioned tables so other tables are untouched.
+            function fixTableCaption() {
+                if (!util.isElement(clone) || !originalHasCaption()) {
+                    return;
+                }
+                const display = getComputedStyle(original).getPropertyValue('display');
+                if (display !== 'table' && display !== 'inline-table') {
+                    return;
+                }
+                clone.style.removeProperty('height');
+                clone.style.removeProperty('block-size');
+            }
+
+            function originalHasCaption() {
+                const children = original.children || [];
+                for (let i = 0; i < children.length; i += 1) {
+                    if (children[i].tagName === 'CAPTION') {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            // A <use href="#id"> often points at a <symbol>/element defined elsewhere
+            // on the page, OUTSIDE the node being rendered — so that target is never
+            // cloned and the <use> renders nothing. Collect a deep copy of the target
+            // here; it's injected into the root clone later so the reference resolves
+            // in the standalone output. (Same-document fragment refs only; external
+            // sprite files `sprite.svg#id` are left untouched.)
+            function collectUseReference(originalUse) {
+                const href =
+                    originalUse.getAttribute('href') ||
+                    originalUse.getAttributeNS('http://www.w3.org/1999/xlink', 'href') ||
+                    originalUse.getAttribute('xlink:href');
+                if (!href || href.charAt(0) !== '#') {
+                    return;
+                }
+                const id = href.slice(1);
+                if (svgRefsToInline.some((ref) => ref.id === id)) {
+                    return; // already collected
+                }
+                const referenced = originalUse.ownerDocument.getElementById(id);
+                if (!referenced) {
+                    return;
+                }
+                const referencedClone = referenced.cloneNode(true);
+                referencedClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+                svgRefsToInline.push({ id: id, node: referencedClone });
             }
         }
     }
@@ -677,7 +1031,9 @@
             isHTMLTextAreaElement: isHTMLTextAreaElement,
             isShadowSlotElement: isShadowSlotElement,
             isSVGElement: isSVGElement,
+            isSVGSVGElement: isSVGSVGElement,
             isSVGRectElement: isSVGRectElement,
+            isSVGUseElement: isSVGUseElement,
             isDimensionMissing: isDimensionMissing,
             isInstanceOf: isInstanceOf,
         };
@@ -773,8 +1129,16 @@
             return isInstanceOf(value, 'SVGElement');
         }
 
+        function isSVGSVGElement(value) {
+            return isInstanceOf(value, 'SVGSVGElement');
+        }
+
         function isSVGRectElement(value) {
             return isInstanceOf(value, 'SVGRectElement');
+        }
+
+        function isSVGUseElement(value) {
+            return isInstanceOf(value, 'SVGUseElement');
         }
 
         function isDataUrl(url) {
@@ -1102,6 +1466,9 @@
 
             if (!isNaN(width)) return width;
 
+            const box = svgBoundingBox(node);
+            if (box) return box.width;
+
             const leftBorder = px(node, 'border-left-width');
             const rightBorder = px(node, 'border-right-width');
             return node.scrollWidth + leftBorder + rightBorder;
@@ -1112,9 +1479,29 @@
 
             if (!isNaN(height)) return height;
 
+            const box = svgBoundingBox(node);
+            if (box) return box.height;
+
             const topBorder = px(node, 'border-top-width');
             const bottomBorder = px(node, 'border-bottom-width');
             return node.scrollHeight + topBorder + bottomBorder;
+        }
+
+        // An SVG sub-element (`<g>`, `<path>`, …) has no CSS box, so getComputedStyle
+        // width/height are `auto` and `scrollWidth`/`scrollHeight` don't exist — sizing
+        // would come out 0/NaN. Its rendered extent is its `getBBox()` instead. Returns
+        // null for non-SVG nodes and when the box is empty or unavailable (e.g. a
+        // detached / `display:none` element, where getBBox throws).
+        function svgBoundingBox(node) {
+            if (node.nodeType !== ELEMENT_NODE || typeof node.getBBox !== 'function') {
+                return null;
+            }
+            try {
+                const box = node.getBBox();
+                return box && (box.width || box.height) ? box : null;
+            } catch (_e) {
+                return null;
+            }
         }
 
         function px(node, styleProperty) {
@@ -1335,7 +1722,25 @@
             });
 
             function inlineCSSProperty(node) {
-                const properties = ['background', 'background-image'];
+                // A styleless element (foreign-namespace; see #151) has no urls to
+                // inline and no `.style` to read — skip rather than crash.
+                if (!node.style) {
+                    return Promise.resolve(node);
+                }
+                // `mask`/`mask-image` (and the `-webkit-` forms) are how SVG icons are
+                // commonly tinted on an element (`mask: url(icon.svg); background:
+                // currentColor`). Like backgrounds, their `url()`s must be inlined or
+                // the standalone output can't fetch them and the icon renders blank
+                // (issue #195). Names are read explicitly via getPropertyValue, so this
+                // is robust regardless of which a browser enumerates.
+                const properties = [
+                    'background',
+                    'background-image',
+                    'mask',
+                    'mask-image',
+                    '-webkit-mask',
+                    '-webkit-mask-image',
+                ];
 
                 const inliningTasks = properties.map(function (propertyName) {
                     const value = node.style.getPropertyValue(propertyName);
@@ -1372,6 +1777,10 @@
         }
     }
 
+    // Marks (in a default-style map) that an element's UA font-size is relative to
+    // its parent — see computeStyleForDefaults and issue #227.
+    const UA_RELATIVE_FONT_SIZE_KEY = Symbol('dtim-ua-relative-font-size');
+
     function copyUserComputedStyleFast(
         options,
         sourceElement,
@@ -1403,12 +1812,51 @@
 
             // If the style does not match the default, or it does not match the parent's, set it. We don't know which
             // styles are inherited from the parent and which aren't, so we have to always check both.
+            // The font-size exception (#227): when the element's UA font-size is
+            // relative to its parent, emit it even if it equals both default and
+            // parent here, because the standalone output may resolve that relative UA
+            // rule against a different parent font-size and diverge.
             if (
                 sourceValue !== defaultValue ||
-                (parentComputedStyles && sourceValue !== parentValue)
+                (parentComputedStyles && sourceValue !== parentValue) ||
+                (name === 'font-size' && defaultStyle[UA_RELATIVE_FONT_SIZE_KEY])
             ) {
                 const priority = sourceComputedStyles.getPropertyPriority(name);
                 setStyleProperty(targetStyle, name, sourceValue, priority);
+            }
+        });
+
+        pinVisibleBorderWidths(sourceComputedStyles, targetStyle);
+    }
+
+    // Coupling guard (#203). The per-longhand diff above can DROP a
+    // `border-<side>-width` when it equals the context-free sandbox default (0px)
+    // while still EMITTING the matching `border-<side>-style`/`-color` (which do
+    // differ — e.g. a reset like `*{ border:0 solid #e5e7eb }`). The standalone
+    // output carries no page stylesheet, so a `solid` style with no pinned width
+    // falls back to the CSS initial `medium` (~3px) and paints a phantom border on
+    // every element. Whenever a side has a visible (non-`none`) border style, pin
+    // that side's width explicitly from the source. Physical longhands are used and
+    // read via getPropertyValue, which every browser resolves regardless of which
+    // border names it happens to ENUMERATE from getComputedStyle (Chrome lists the
+    // `border-width` shorthand and logical `border-block/inline-*`; others differ).
+    function pinVisibleBorderWidths(sourceComputedStyles, targetStyle) {
+        ['top', 'right', 'bottom', 'left'].forEach(function (side) {
+            const styleName = `border-${side}-style`;
+            const widthName = `border-${side}-width`;
+            const styleValue = sourceComputedStyles.getPropertyValue(styleName);
+
+            if (!styleValue || styleValue === 'none') {
+                return; // no visible border on this side
+            }
+            if (targetStyle.getPropertyValue(widthName)) {
+                return; // width already pinned by the diff
+            }
+
+            const widthValue = sourceComputedStyles.getPropertyValue(widthName);
+            if (widthValue) {
+                const priority = sourceComputedStyles.getPropertyPriority(widthName);
+                setStyleProperty(targetStyle, widthName, widthValue, priority);
             }
         });
     }
@@ -1463,7 +1911,10 @@
 
     function getDefaultStyle(options, sourceElement) {
         const tagHierarchy = computeTagHierarchy(sourceElement);
-        const tagKey = computeTagKey(tagHierarchy);
+        // The default style depends on UA attribute selectors (see
+        // applyDefaultSelectorAttributes), so fold their signature into the cache
+        // key — otherwise an `<a href>` and a bare `<a>` would share one cache slot.
+        const tagKey = computeTagKey(tagHierarchy) + computeAttributeKey(sourceElement);
         if (tagNameDefaultStyles[tagKey]) {
             return tagNameDefaultStyles[tagKey];
         }
@@ -1476,6 +1927,7 @@
             sandboxWindow.document,
             tagHierarchy
         );
+        applyDefaultSelectorAttributes(defaultElement, sourceElement);
         const defaultStyle = computeStyleForDefaults(sandboxWindow, defaultElement);
         destroyElementHierarchy(defaultElement);
 
@@ -1540,6 +1992,23 @@
                         ? 'auto'
                         : defaultComputedStyle.getPropertyValue(name);
             });
+
+            // Record whether the UA gives this element a font-size that differs from
+            // its inherited (parent) one — i.e. a relative rule like h1–h6 {
+            // font-size: N.Nem }. Such a value must NOT be dropped on the assumption
+            // the output re-derives it: the standalone output's parent font-size can
+            // differ, so the UA's relative rule resolves to a different px there
+            // (issue #227 — an <h2> overridden to its parent's size lost the override
+            // and the UA 1.5em re-applied). Plain elements that simply inherit
+            // font-size are unaffected, so this adds no output for the common case.
+            const parentElement = defaultElement.parentElement;
+            if (parentElement) {
+                const parentFontSize = sandboxWindow
+                    .getComputedStyle(parentElement)
+                    .getPropertyValue('font-size');
+                defaultStyle[UA_RELATIVE_FONT_SIZE_KEY] =
+                    defaultStyle['font-size'] !== parentFontSize;
+            }
             return defaultStyle;
         }
 
@@ -1552,6 +2021,48 @@
                 element = parentElement;
             } while (element && element.tagName !== 'BODY');
         }
+    }
+
+    // UA stylesheets style some elements through attribute selectors, most notably
+    // `a:any-link` / `a[href] { text-decoration: underline; color: ... }`. The
+    // sandbox builds default elements from tag names alone, so a default `<a>` has
+    // NO underline. A page that *removes* the underline (`a { text-decoration: none }`)
+    // then matches that contextless default, the `none` is dropped as "same as
+    // default", and the UA stylesheet re-applies the underline in the standalone
+    // output — the link is underlined again (issue #227). Reflecting the relevant
+    // attribute(s) onto the default element gives it the same UA baseline as the real
+    // element, so a genuine override differs and is preserved.
+    //
+    // Only presence-style attributes that drive UA selectors are mirrored; the value
+    // is copied verbatim where one exists. Keep this list and computeAttributeKey in
+    // lockstep so the default-style cache key stays correct.
+    const DEFAULT_SELECTOR_ATTRIBUTES = ['href'];
+
+    function applyDefaultSelectorAttributes(defaultElement, sourceElement) {
+        if (!sourceElement || !sourceElement.hasAttribute) {
+            return;
+        }
+        DEFAULT_SELECTOR_ATTRIBUTES.forEach(function (attribute) {
+            if (sourceElement.hasAttribute(attribute)) {
+                defaultElement.setAttribute(
+                    attribute,
+                    sourceElement.getAttribute(attribute)
+                );
+            }
+        });
+    }
+
+    function computeAttributeKey(sourceElement) {
+        if (!sourceElement || !sourceElement.hasAttribute) {
+            return '';
+        }
+        return DEFAULT_SELECTOR_ATTRIBUTES.filter(function (attribute) {
+            return sourceElement.hasAttribute(attribute);
+        })
+            .map(function (attribute) {
+                return `[${attribute}]`;
+            })
+            .join('');
     }
 
     function ensureSandboxWindow() {

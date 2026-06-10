@@ -89,6 +89,15 @@ declare namespace domToImage {
          */
         scale?: number;
         /**
+         * Device-pixel-ratio multiplier for the rasterized canvas output
+         * (`toPng`/`toJpeg`/`toBlob`/`toCanvas`). Set to
+         * `window.devicePixelRatio` for crisp high-DPI/Retina output. Composes
+         * with `scale` (effective multiplier = `scale * pixelRatio`); an
+         * oversized request is clamped to the browser's canvas limit with a
+         * warning. Defaults to 1.0.
+         */
+        pixelRatio?: number;
+        /**
          * Data URL of a placeholder image used when fetching an image fails.
          * When unset, failed images reject. Defaults to undefined.
          */
@@ -120,6 +129,13 @@ declare namespace domToImage {
          * reference the original image URLs. Defaults to false.
          */
         disableInlineImages?: boolean;
+        /**
+         * Force the explicitly-captured root node to be shown even when it is
+         * hidden by its own `display: none` or `opacity: 0` (a `visibility: hidden`
+         * ancestor is always handled). Root-only and opt-in: deliberate hiding of
+         * elements *inside* the captured subtree is left intact. Defaults to false.
+         */
+        ensureShown?: boolean;
         /**
          * Send authentication credentials with cross-origin (CORS) requests for
          * external resources. Defaults to false.

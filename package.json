@@ -1,6 +1,6 @@
 {
     "name": "dom-to-image-more",
-    "version": "3.8.0",
+    "version": "3.9.0-rc1",
     "description": "Generates an image from a DOM node using HTML5 canvas and SVG",
     "main": "dist/dom-to-image-more.min.js",
     "types": "dom-to-image-more.d.ts",
@@ -26,12 +26,14 @@
         "mocha": "^11.7.6",
         "prettier": "^3.8.4",
         "semver": "^7.8.4",
-        "typescript": "^5.9.3"
+        "typescript": "^6.0.3"
     },
     "scripts": {
         "format": "eslint src --fix && prettier --write .",
         "lint": "eslint --max-warnings=0 src && prettier --check .",
         "test": "grunt test --debug",
+        "test:logic": "LOGIC_ONLY=1 grunt test",
+        "test:logic:firefox": "KARMA_BROWSER=firefox LOGIC_ONLY=1 grunt test",
         "test:types": "tsc --noEmit --strict --esModuleInterop --lib dom,es2020 test-d/dom-to-image-more.test-d.ts",
         "build": "grunt",
         "build:ci": "grunt ci",

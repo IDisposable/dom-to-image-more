@@ -279,6 +279,23 @@ SVGs that reference the original image files, so they my break if a referenced U
 This is always safe to use when generating a PNG/JPG file because the entire SVG image is
 rendered.
 
+#### ensureShown
+
+Set to true to force the node you pass in to be rendered even when it is hidden by its own
+`display: none` or `opacity: 0`. This is **opt-in** and applies only to the captured
+**root**: deliberate hiding of elements _inside_ the subtree (e.g. a collapsed panel) is
+left intact. Because a `display: none` element has no layout box, the original is briefly
+revealed in place to measure it (synchronously, so nothing flashes on screen, though it
+does force a layout reflow and may notify a `ResizeObserver`/`IntersectionObserver`
+watching the node) and its live styles are restored immediately afterward. The element's
+real shown `display` is recovered where possible — if the node is hidden by an inline
+`style="display:none"`, dropping it lets the cascade restore the true value (e.g. a
+class's `display: flex`); only when a _stylesheet_ rule hides it is the display
+approximated by the element's tag default (`block`, `inline`, `table`, …), since the
+intended value is then unknowable. Note that a `display: none` on an **ancestor** above
+the captured node is not covered — move the node out or reveal the ancestor yourself.
+Defaults to `false`.
+
 #### styleCaching
 
 Selects how computed-style lookups are cached while cloning, as a speed/accuracy
@@ -323,6 +340,22 @@ below. Defaults to undefined.
 
 Scale value to be applied on canvas's `ctx.scale()` on both x and y axis. Can be used to
 increase the image quality with higher image size.
+
+#### pixelRatio
+
+Device-pixel-ratio multiplier for the rasterized output (`toPng`, `toJpeg`, `toBlob`,
+`toCanvas`). Defaults to `1` (CSS pixels, unchanged). Set it to `window.devicePixelRatio`
+to get crisp output on high-DPI / Retina displays:
+
+```javascript
+domtoimage.toPng(node, { pixelRatio: window.devicePixelRatio });
+```
+
+It composes with [scale](#scale) (the effective multiplier is `scale × pixelRatio`). If
+the requested canvas (`width × height × scale × pixelRatio`) would exceed the browser's
+canvas size limit, the multiplier is clamped to fit and a warning is logged, so a large
+capture degrades predictably instead of coming out partial or blank (see _Things to watch
+out for_).
 
 ### Alternative Solutions to CORS Policy Issue
 
@@ -435,6 +468,46 @@ taken:
 
 1. Done!
 
+### Beyond the basics
+
+A few things the cloning step does that aren't obvious from the list above:
+
+- **SVG `<use>` → `<symbol>` inlining.** An `<svg>` often paints an icon with
+  `<use href="#icon">` where the referenced `<symbol>` (or any element) lives **elsewhere
+  on the page** — outside the node you're rendering. That target would never be cloned, so
+  the `<use>` would render nothing. The library detects each `<use>`, resolves its
+  `href`/`xlink:href` against the **live** document, and injects a copy of the referenced
+  element into a hidden `<defs>` in the output so the reference still resolves in the
+  standalone image. The `<use>` element itself is left in place (keeping its own position,
+  size, and inherited `currentColor`). Same-document references only — external sprite
+  files (`sprite.svg#icon`) are left untouched.
+
+- **Default-style optimization (`styleCaching`).** Copying every computed style onto every
+  clone produces enormous SVGs. Instead, the library computes each element's _browser
+  default_ styles (for its tag, in a throwaway sandbox iframe) and emits only the
+  properties that actually differ from the default or the parent. `styleCaching`
+  (`'strict'` by default, or `'relaxed'`) tunes how aggressively those per-tag
+  computations are reused across siblings.
+
+- **Pseudo-elements and form state.** `::before`/`::after` aren't cloned by the DOM, so
+  they're recreated as real elements carrying the pseudo-element's computed style. Current
+  values of form controls (`<input>`, `<textarea>`, checked/selected state) are copied
+  too, since those live in the DOM, not in attributes.
+
+- **Open shadow DOM.** Open shadow roots and their slot-assigned (projected) nodes are
+  walked and flattened into the clone, so web-component content renders.
+
+- **Cross-origin resources.** Web fonts and images are fetched and base64-inlined; for
+  images that block CORS you can route them through a proxy with the [corsImg](#corsimg)
+  option, send cookies with `useCredentials`/`useCredentialsFilters`, or cap slow fetches
+  with `httpTimeout`. A broken **content image** degrades gracefully (see _Things to watch
+  out for_ below).
+
+- **No mutation of your DOM.** All of this happens on a detached clone, and any temporary
+  helpers (the sandbox iframe, wrapper spans for non-element nodes) are tracked and
+  removed in a `finally`, so a render that throws part-way can't leak nodes into your
+  page.
+
 ## Using Typescript
 
 This package ships its own type definitions (`dom-to-image-more.d.ts`), so no separate
@@ -478,6 +551,41 @@ need to reach into it for testing.
   (turning the SVG into a PNG/JPEG/canvas) or a `<canvas>` snapshot is fatal — the
   returned promise rejects so your `.catch()` can handle it, rather than silently
   returning a blank image. In short: missing content degrades, a broken output rejects.
+
+- A node hidden by an ancestor's `visibility: hidden` **is** rendered: because you asked
+  to capture that node explicitly, the captured root is forced visible (and its
+  descendants follow), while any deliberate per-element `visibility: hidden` inside the
+  subtree is still honored. Two related cases — a `display: none` or `opacity: 0` on the
+  node you pass — are **not** rescued by default, because they are not inherited and the
+  value is often intentional. Opt in with [ensureShown](#ensureshown) to render those, or
+  un-hide the node yourself first (note that a `display: none` **ancestor** above the
+  captured node is not covered by `ensureShown` — move the node out or reveal the
+  ancestor).
+
+- **High-DPI / Retina output looks soft, and very large captures can come out partial.**
+  By default the output is rasterized at CSS-pixel resolution (1×). On high-DPI displays
+  that can look soft when shown at native resolution — pass
+  [pixelRatio](#pixelratio): `window.devicePixelRatio` for a crisp capture. Browsers also
+  cap canvas size; a capture whose `width × height × scale × pixelRatio` exceeds that cap
+  would otherwise yield a **partial or blank** bitmap, so the library clamps the
+  multiplier to fit and logs a warning instead (render a smaller region, or lower
+  `scale`/`pixelRatio`, if you hit it).
+
+- **At a fractional display scale or browser zoom (e.g. Windows 125%, or 125% page zoom),
+  flex/grid layouts may be shifted by ~1px in the output.** The capture is rasterized from
+  an SVG `<foreignObject>` that re-lays-out the content at 100% zoom / whole CSS pixels,
+  so sub-pixel positions snapped by the live render at a fractional device-pixel-ratio can
+  land on slightly different boundaries. This is an inherent limitation of the approach,
+  not a flex bug (the styles are reproduced faithfully);
+  `pixelRatio: window.devicePixelRatio` can reduce it but won't fully eliminate it.
+
+- **`backdrop-filter` is not rendered.** The property is copied to the clone faithfully,
+  but a `backdrop-filter` blurs/tints whatever is painted _behind_ an element, and the
+  captured node is rasterized inside an isolated SVG `<foreignObject>` with nothing behind
+  it to sample — so there's nothing for the filter to act on and it has no visible effect.
+  This is structural to the SVG-foreignObject technique. (A regular `filter` on the
+  element itself works fine; it's specifically the _backdrop_ variant that can't be
+  reproduced.)
 
 ## Authors
 
