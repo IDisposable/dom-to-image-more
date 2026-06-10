@@ -41,8 +41,12 @@ module.exports = function (config) {
         customLaunchers: {
             chrome: {
                 base: 'Chrome',
+                // Pin the viewport and device-pixel-ratio so renders match the
+                // static reference images regardless of the host's display scaling.
+                // (A different DPR shifts viewport-based `sizes`/srcset selection and
+                // sub-pixel layout, which would break exact-pixel comparisons.)
                 flags: [
-                    '--no-sandbox --remote-debugging-port=9876 --window-size=1024,768',
+                    '--no-sandbox --remote-debugging-port=9876 --window-size=1024,768 --force-device-scale-factor=1 --high-dpi-support=1',
                 ],
                 debug: true,
             },

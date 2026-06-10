@@ -472,6 +472,7 @@
             }
 
             return Promise.resolve()
+                .then(decodeSourceImage)
                 .then(cloneStyle)
                 .then(clonePseudoElements)
                 .then(copyUserInput)
@@ -481,20 +482,46 @@
                     return clone;
                 });
 
+            // An <img> contributes its height from the loaded bitmap's aspect ratio.
+            // If the source image hasn't decoded yet (e.g. loading="lazy", or simply
+            // not yet loaded), its computed height is ~0, so cloneStyle would copy a
+            // collapsed box and the picture drops out of the capture. Forcing the
+            // decode first makes the dimensions real and resolves currentSrc for
+            // srcset/sizes images, so the capture is deterministic regardless of when
+            // the source happened to load.
+            function decodeSourceImage() {
+                if (
+                    !util.isHTMLImageElement(original) ||
+                    typeof original.decode !== 'function'
+                ) {
+                    return undefined;
+                }
+
+                if (original.complete && original.naturalWidth > 0) {
+                    return undefined;
+                }
+
+                return original.decode().catch(function () {
+                    // Broken or blocked image: nothing to wait for, proceed with
+                    // whatever dimensions/source we can read below.
+                });
+            }
+
             function fixResponsiveImages() {
-                if (util.isHTMLImageElement(clone))
-                {
-                    // Remove lazy-loading and responsive attributes
-                    clone.removeAttribute('loading');
+                if (!util.isHTMLImageElement(clone)) {
+                    return;
+                }
 
-                    // If the original had srcset or sizes, set src to the resolved image
-                    if (original.srcset || original.sizes) {
-                        clone.removeAttribute('srcset');
-                        clone.removeAttribute('sizes');
+                // Remove lazy-loading and responsive attributes
+                clone.removeAttribute('loading');
 
-                        // Use currentSrc if available, otherwise fallback to src
-                        clone.src = original.currentSrc || original.src;
-                    }
+                // Collapse srcset/sizes down to the single source the browser chose
+                // (now resolved, thanks to decodeSourceImage), so the clone renders
+                // exactly that candidate.
+                if (original.srcset || original.sizes) {
+                    clone.removeAttribute('srcset');
+                    clone.removeAttribute('sizes');
+                    clone.src = original.currentSrc || original.src;
                 }
             }
 
