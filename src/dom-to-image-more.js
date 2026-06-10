@@ -551,7 +551,10 @@
         const MAX_DIMENSION = 16384;
         const MAX_AREA = MAX_DIMENSION * MAX_DIMENSION;
 
-        if (!(width > 0) || !(height > 0) || !(scale > 0)) {
+        // All three must be positive finite numbers; written this way (rather than
+        // `<= 0`) so NaN is also rejected, since `NaN <= 0` is false.
+        const allPositive = width > 0 && height > 0 && scale > 0;
+        if (!allPositive) {
             return scale;
         }
 
