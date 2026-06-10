@@ -1573,6 +1573,44 @@
                     .catch(done);
             });
 
+            it('should fill the whole canvas to its edges (guards Firefox crop #160 / blank #146)', function (done) {
+                // A solid-color box must cover every corner of the output. Firefox
+                // could crop a <foreignObject> capture to a default intrinsic box
+                // (#160) or read a blank canvas before the image finished decoding
+                // (#146); both leave outer pixels transparent. The fixes draw into an
+                // explicit destination rectangle and await decode() before reading.
+                // Solid-color pixel sampling is OS-independent, so this guards both
+                // engines in CI (where the real Firefox crop/blank would surface).
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="fill" style="width:60px;height:40px;background-color:red"></div>';
+                        return domtoimage.toPixelData(document.getElementById('fill'));
+                    })
+                    .then(function (px) {
+                        const width = 60;
+                        function offset(x, y) {
+                            return (y * width + x) * 4;
+                        }
+                        [
+                            ['center', offset(30, 20)],
+                            ['top-left', offset(2, 2)],
+                            ['top-right', offset(57, 2)],
+                            ['bottom-left', offset(2, 37)],
+                            ['bottom-right', offset(57, 37)],
+                        ].forEach(function (sample) {
+                            const name = sample[0];
+                            const i = sample[1];
+                            assert.equal(px[i], 255, name + ' red channel');
+                            assert.equal(px[i + 1], 0, name + ' green channel');
+                            assert.equal(px[i + 2], 0, name + ' blue channel');
+                            assert.isAbove(px[i + 3], 200, name + ' opaque');
+                        });
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
             it('should not crash when loading external stylesheet causes error', function (done) {
                 loadTestPage('ext-css/dom-node.html', 'ext-css/style.css')
                     .then(renderToPng)
