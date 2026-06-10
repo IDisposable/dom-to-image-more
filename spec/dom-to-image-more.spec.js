@@ -49,6 +49,78 @@
         });
 
         describe('features', function () {
+            // #168: flex misalignment in exports was attributed to flexbox handling,
+            // but it only reproduces at fractional devicePixelRatio (Windows 125% scale
+            // or 125% browser zoom) — a sub-pixel re-snapping fidelity limit of the
+            // SVG-foreignObject approach, not a dropped style. At DPR=1 the flex layout
+            // is reproduced faithfully; this guards that the flex styles aren't dropped
+            // and the cloned items lay out identically to the originals.
+            it('reproduces a flex layout faithfully (#168)', function (done) {
+                let liveWidths;
+                let cloneWidths;
+                loadTestPage()
+                    .then(function () {
+                        domNode().style.width = '201px';
+                        domNode().innerHTML =
+                            '<div id="flex" style="display:flex;gap:3px;justify-content:space-between;align-items:center">' +
+                            '<div class="it" style="flex:1;height:20px;background:red"></div>' +
+                            '<div class="it" style="flex:1;height:20px;background:green"></div>' +
+                            '<div class="it" style="flex:1;height:20px;background:blue"></div>' +
+                            '</div>';
+                        liveWidths = measureItemWidths(domNode());
+                        return domtoimage.toSvg(domNode(), {
+                            onclone: function (clone) {
+                                clone.style.position = 'absolute';
+                                clone.style.left = '-9999px';
+                                document.body.appendChild(clone);
+                                cloneWidths = measureItemWidths(clone);
+                                document.body.removeChild(clone);
+                                clone.style.position = '';
+                                clone.style.left = '';
+                                return clone;
+                            },
+                        });
+                    })
+                    .then(function (svg) {
+                        const flex = (decodeURIComponent(svg).match(
+                            /<div id="flex"[^>]*>/
+                        ) || [])[0];
+                        assert.isString(flex, 'flex container should be present');
+                        assert.match(
+                            flex,
+                            /display:\s*flex/,
+                            'display:flex must be preserved'
+                        );
+                        assert.match(
+                            flex,
+                            /(column-)?gap:\s*3px/,
+                            'gap must be preserved'
+                        );
+                        assert.match(
+                            flex,
+                            /justify-content:\s*space-between/,
+                            'justify-content must be preserved'
+                        );
+                        // The clone's flex items must lay out exactly like the originals.
+                        assert.deepEqual(
+                            cloneWidths,
+                            liveWidths,
+                            'cloned flex items must match the live layout'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+
+                function measureItemWidths(root) {
+                    return Array.prototype.map.call(
+                        root.querySelectorAll('.it'),
+                        function (el) {
+                            return Math.round(el.getBoundingClientRect().width * 100);
+                        }
+                    );
+                }
+            });
+
             // #195: an SVG icon rendered on an element via a CSS mask
             // (`mask: url(icon.svg); background: currentColor`) came out blank because
             // the inliner only inlined `background`/`background-image`, leaving the mask
