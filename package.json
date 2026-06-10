@@ -3,6 +3,7 @@
     "version": "3.7.1",
     "description": "Generates an image from a DOM node using HTML5 canvas and SVG",
     "main": "dist/dom-to-image-more.min.js",
+    "types": "dom-to-image-more.d.ts",
     "devDependencies": {
         "chai": "^4.4.1",
         "eslint": "^9.33.0",
