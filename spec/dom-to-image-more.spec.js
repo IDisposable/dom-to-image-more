@@ -114,6 +114,59 @@
                     .catch(done);
             });
 
+            // #209: a <table>'s computed height is its full element box, but CSS
+            // `height` on a table sizes only the grid box (the <caption> sits outside
+            // it). Copying the computed height back as an inline style made the caption
+            // stack on top of a full-height grid, growing the cloned table by the
+            // caption height and pushing trailing siblings out of the output (clipping
+            // them). The clone's table must lay out at the same height as the original.
+            it('does not grow a captioned table in the clone (#209)', function (done) {
+                let host;
+                let originalTableHeight = -1;
+                let cloneTableHeight = -1;
+                loadTestPage()
+                    .then(function () {
+                        host = domNode();
+                        host.style.width = '200px';
+                        host.innerHTML =
+                            '<table><caption>A Table Caption</caption>' +
+                            '<thead><tr><th>A</th></tr></thead>' +
+                            '<tbody><tr><td>Long text text text text text text text</td></tr></tbody>' +
+                            '</table><div style="color:red">Bottom text</div>';
+                        originalTableHeight = host
+                            .querySelector('table')
+                            .getBoundingClientRect().height;
+                        return domtoimage.toSvg(host, {
+                            onclone: function (clone) {
+                                // Lay the clone out offscreen and measure its table.
+                                clone.style.position = 'absolute';
+                                clone.style.left = '-9999px';
+                                clone.style.top = '0';
+                                document.body.appendChild(clone);
+                                cloneTableHeight = clone
+                                    .querySelector('table')
+                                    .getBoundingClientRect().height;
+                                document.body.removeChild(clone);
+                                clone.style.position = '';
+                                clone.style.left = '';
+                                clone.style.top = '';
+                                return clone;
+                            },
+                        });
+                    })
+                    .then(function () {
+                        // Without the fix the clone's table is taller by the caption
+                        // height (~18px); allow 1px of sub-pixel slack.
+                        assert.isAtMost(
+                            cloneTableHeight,
+                            originalTableHeight + 1,
+                            'cloned captioned table must not grow taller than the original'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
             it('should handle adjustClonedNode', function (done) {
                 function oncloned(_node, clone, after) {
                     /* jshint unused:false */

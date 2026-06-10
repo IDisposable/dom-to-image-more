@@ -505,6 +505,7 @@
                 .then(clonePseudoElements)
                 .then(copyUserInput)
                 .then(fixSvg)
+                .then(fixTableCaption)
                 .then(fixResponsiveImages)
                 .then(function () {
                     return clone;
@@ -685,6 +686,37 @@
                 }
             }
 
+            // A `<table>`'s computed height is its full element box, but the CSS
+            // `height` property on a table sizes only the *grid box* (the rows) — a
+            // `<caption>` is laid out outside that box. So copying the computed height
+            // back onto the clone as an inline style makes the caption stack on top of
+            // an already-full-height grid, growing the table by the caption's height and
+            // pushing trailing siblings out of the (correctly-sized) output, which clips
+            // them (issue #209). Dropping the explicit height lets the grid size itself
+            // from the faithfully-cloned row heights, with the caption outside as it is
+            // in the live page. Scoped to captioned tables so other tables are untouched.
+            function fixTableCaption() {
+                if (!util.isElement(clone) || !originalHasCaption()) {
+                    return;
+                }
+                const display = getComputedStyle(original).getPropertyValue('display');
+                if (display !== 'table' && display !== 'inline-table') {
+                    return;
+                }
+                clone.style.removeProperty('height');
+                clone.style.removeProperty('block-size');
+            }
+
+            function originalHasCaption() {
+                const children = original.children || [];
+                for (let i = 0; i < children.length; i += 1) {
+                    if (children[i].tagName === 'CAPTION') {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
             // A <use href="#id"> often points at a <symbol>/element defined elsewhere
             // on the page, OUTSIDE the node being rendered — so that target is never
             // cloned and the <use> renders nothing. Collect a deep copy of the target
@@ -694,10 +726,7 @@
             function collectUseReference(originalUse) {
                 const href =
                     originalUse.getAttribute('href') ||
-                    originalUse.getAttributeNS(
-                        'http://www.w3.org/1999/xlink',
-                        'href'
-                    ) ||
+                    originalUse.getAttributeNS('http://www.w3.org/1999/xlink', 'href') ||
                     originalUse.getAttribute('xlink:href');
                 if (!href || href.charAt(0) !== '#') {
                     return;
@@ -711,10 +740,7 @@
                     return;
                 }
                 const referencedClone = referenced.cloneNode(true);
-                referencedClone.setAttribute(
-                    'xmlns',
-                    'http://www.w3.org/2000/svg'
-                );
+                referencedClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
                 svgRefsToInline.push({ id: id, node: referencedClone });
             }
         }
