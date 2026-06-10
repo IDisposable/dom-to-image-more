@@ -1611,6 +1611,42 @@
                     .catch(done);
             });
 
+            it('should render a transform-scaled node at the reporter dimensions (issue #159)', function (done) {
+                // #159 reported a browser crash on toPng of a small (296×80) node
+                // carrying a CSS transform, with an explicit width/height and a
+                // transparent bgcolor. Those dimensions are far below any canvas cap
+                // (so the #182 clamp is irrelevant here); this reproduces the exact
+                // configuration and asserts it completes with a valid PNG instead of
+                // crashing/hanging.
+                this.timeout(30000);
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="big" style="width:296px;height:80px;' +
+                            'transform:scale(2);transform-origin:top left">scaled</div>';
+                        return domtoimage.toPng(document.getElementById('big'), {
+                            width: 296,
+                            height: 80,
+                            bgcolor: 'transparent',
+                            cacheBust: false,
+                        });
+                    })
+                    .then(function (dataUrl) {
+                        assert.match(
+                            dataUrl,
+                            /^data:image\/png/,
+                            'must produce a PNG without crashing'
+                        );
+                        assert.isAbove(
+                            dataUrl.length,
+                            'data:image/png;base64,'.length,
+                            'the PNG must carry actual image data'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
             it('should not crash when loading external stylesheet causes error', function (done) {
                 loadTestPage('ext-css/dom-node.html', 'ext-css/style.css')
                     .then(renderToPng)
