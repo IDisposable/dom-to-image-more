@@ -49,6 +49,55 @@
         });
 
         describe('features', function () {
+            // #203: a CSS reset like Tailwind Preflight (`*{ border-width:0;
+            // border-style:solid; border-color:#e5e7eb }`) makes border-style/color
+            // differ from the context-free sandbox default (so they're emitted) while
+            // border-width equals the default 0 (so it was dropped). In the standalone
+            // output with no stylesheet, a solid style with no width paints the CSS
+            // initial `medium` (~3px) phantom border on every element. The fix pins the
+            // width whenever a side has a visible style.
+            it('does not paint phantom borders under a border reset (#203)', function (done) {
+                const style = document.createElement('style');
+                style.id = 'reset-203';
+                style.textContent =
+                    '* { border-width: 0; border-style: solid; border-color: rgb(229, 231, 235); }';
+                document.head.appendChild(style);
+
+                function cleanupReset() {
+                    const el = document.getElementById('reset-203');
+                    if (el) {
+                        el.remove();
+                    }
+                }
+
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML = '<div id="inner">hello world</div>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const match = decoded.match(/<div id="inner"[^>]*>/);
+                        assert.isNotNull(match, 'inner div should be in the output');
+                        const inner = match[0];
+                        // The reset makes border-style solid, which alone would paint a
+                        // `medium` border. The width must be pinned to 0 so it doesn't.
+                        if (/border[^;"]*style:\s*solid/.test(inner)) {
+                            assert.match(
+                                inner,
+                                /border(-[a-z]+)?-width:\s*0px/,
+                                'a solid border style must be accompanied by a pinned 0px width'
+                            );
+                        }
+                    })
+                    .then(cleanupReset)
+                    .then(done)
+                    .catch(function (e) {
+                        cleanupReset();
+                        done(e);
+                    });
+            });
+
             // #215: a <use> that references a <symbol>/element defined OUTSIDE the
             // rendered subtree would render nothing, because the referenced node was
             // never cloned. We now collect the target and inject it into the output

@@ -1532,6 +1532,40 @@
                 setStyleProperty(targetStyle, name, sourceValue, priority);
             }
         });
+
+        pinVisibleBorderWidths(sourceComputedStyles, targetStyle);
+    }
+
+    // Coupling guard (#203). The per-longhand diff above can DROP a
+    // `border-<side>-width` when it equals the context-free sandbox default (0px)
+    // while still EMITTING the matching `border-<side>-style`/`-color` (which do
+    // differ — e.g. a reset like `*{ border:0 solid #e5e7eb }`). The standalone
+    // output carries no page stylesheet, so a `solid` style with no pinned width
+    // falls back to the CSS initial `medium` (~3px) and paints a phantom border on
+    // every element. Whenever a side has a visible (non-`none`) border style, pin
+    // that side's width explicitly from the source. Physical longhands are used and
+    // read via getPropertyValue, which every browser resolves regardless of which
+    // border names it happens to ENUMERATE from getComputedStyle (Chrome lists the
+    // `border-width` shorthand and logical `border-block/inline-*`; others differ).
+    function pinVisibleBorderWidths(sourceComputedStyles, targetStyle) {
+        ['top', 'right', 'bottom', 'left'].forEach(function (side) {
+            const styleName = `border-${side}-style`;
+            const widthName = `border-${side}-width`;
+            const styleValue = sourceComputedStyles.getPropertyValue(styleName);
+
+            if (!styleValue || styleValue === 'none') {
+                return; // no visible border on this side
+            }
+            if (targetStyle.getPropertyValue(widthName)) {
+                return; // width already pinned by the diff
+            }
+
+            const widthValue = sourceComputedStyles.getPropertyValue(widthName);
+            if (widthValue) {
+                const priority = sourceComputedStyles.getPropertyPriority(widthName);
+                setStyleProperty(targetStyle, widthName, widthValue, priority);
+            }
+        });
     }
 
     let removeDefaultStylesTimeoutId = null;
