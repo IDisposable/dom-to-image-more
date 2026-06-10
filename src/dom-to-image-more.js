@@ -268,6 +268,7 @@
                     svg.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
                     return new XMLSerializer().serializeToString(svg);
                 })
+                .then(normalizeCssUrlQuotes)
                 .then(util.escapeXhtml)
                 .then(function (xhtml) {
                     const foreignObjectSizing =
@@ -285,6 +286,25 @@
                 .then(function (svg) {
                     return `data:image/svg+xml;charset=utf-8,${svg}`;
                 });
+        }
+
+        // Browsers normalize CSS `url()` values to double quotes, so setting one via
+        // the live style (options.style, inlined images, copied computed styles) and
+        // then serializing it inside the double-quoted `style="…"` attribute escapes
+        // those quotes to `&quot;` — valid, but surprising and reported as broken
+        // (issue #191). Rewrite `url(&quot;X&quot;)` to single-quoted `url('X')` for
+        // clean, conventional output. Single quotes don't collide with the attribute
+        // delimiter, so they survive serialization unescaped. Left as-is when X itself
+        // contains a single quote (the `&quot;` form is still correct there). Runs on
+        // the serialized string because the live style object always re-normalizes
+        // back to double quotes, so it can't be fixed before serializing.
+        function normalizeCssUrlQuotes(serialized) {
+            return serialized.replace(
+                /url\(&quot;([^]*?)&quot;\)/g,
+                function (match, inner) {
+                    return inner.indexOf("'") >= 0 ? match : `url('${inner}')`;
+                }
+            );
         }
 
         // `ensureShown` opt-in: make the explicitly-captured ROOT appear even if it

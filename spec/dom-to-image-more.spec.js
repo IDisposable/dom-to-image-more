@@ -49,6 +49,37 @@
         });
 
         describe('features', function () {
+            // #191: a CSS `url()` set via options.style (the browser normalizes it to
+            // double quotes) was serialized inside the double-quoted style attribute as
+            // `url(&quot;…&quot;)`. We now emit clean single-quoted `url('…')`.
+            it('emits clean url() quotes for background-image (#191)', function (done) {
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML = '<div id="bg">x</div>';
+                        return domtoimage.toSvg(document.getElementById('bg'), {
+                            style: {
+                                'background-image': "url('https://example.com/img.png')",
+                            },
+                        });
+                    })
+                    .then(function (svg) {
+                        const bg = (svg.match(/<div id="bg"[^>]*>/) || [])[0];
+                        assert.isString(bg, 'the styled div should be in the output');
+                        assert.notInclude(
+                            bg,
+                            '&quot;',
+                            'url() quotes must not be HTML-escaped'
+                        );
+                        assert.include(
+                            bg,
+                            "url('https://example.com/img.png')",
+                            'background-image should carry a clean single-quoted url()'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
             // ensureShown (opt-in): force the explicitly-captured root to appear even
             // when it is hidden by its own display:none / opacity:0. display:none has no
             // layout box, so the original is briefly revealed in place to measure, the
