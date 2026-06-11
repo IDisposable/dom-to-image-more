@@ -439,6 +439,52 @@
                             .catch(done);
                     });
 
+                    it('inlines a ::before background-image url (#16)', function (done) {
+                        // A background-image on a ::before/::after pseudo-element lives
+                        // inside a <style> rule that the element-style image inliner
+                        // never visits.
+                        this.timeout(15000);
+                        const url = '/base/spec/resources/images/image.png';
+                        const style = document.createElement('style');
+                        style.id = 'pseudo16';
+                        style.textContent =
+                            '#p16::before { content: ""; display: inline-block;' +
+                            ' width: 20px; height: 20px; background-image: url(' +
+                            url +
+                            '); }';
+                        document.head.appendChild(style);
+                        function cleanup() {
+                            const el = document.getElementById('pseudo16');
+                            if (el) {
+                                el.remove();
+                            }
+                        }
+                        loadTestPage()
+                            .then(function () {
+                                domNode().innerHTML = '<div id="p16">x</div>';
+                                return renderToSvg(domNode());
+                            })
+                            .then(function (svg) {
+                                const decoded = decodeURIComponent(svg);
+                                assert.include(
+                                    decoded,
+                                    'data:image',
+                                    'the ::before background-image must be inlined as a data: URL'
+                                );
+                                assert.notInclude(
+                                    decoded,
+                                    'image.png',
+                                    'the external pseudo background url must not survive'
+                                );
+                            })
+                            .then(cleanup)
+                            .then(done)
+                            .catch(function (e) {
+                                cleanup();
+                                done(e);
+                            });
+                    });
+
                     it('emits clean url() quotes for background-image (#191)', function (done) {
                         // #191: a CSS `url()` set via options.style (the browser normalizes it to
                         // double quotes) was serialized inside the double-quoted style attribute as

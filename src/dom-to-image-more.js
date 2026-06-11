@@ -938,51 +938,51 @@
             function clonePseudoElements() {
                 const cloneClassName = util.uid();
 
-                [':before', ':after'].forEach(function (element) {
-                    clonePseudoElement(element);
-                });
+                return Promise.all([':before', ':after'].map(clonePseudoElement));
 
                 function clonePseudoElement(element) {
                     const style = getComputedStyle(original, element);
                     const content = style.getPropertyValue('content');
 
                     if (content === '' || content === 'none') {
-                        return;
+                        return undefined;
                     }
 
                     const currentClass = clone.getAttribute('class') || '';
                     clone.setAttribute('class', `${currentClass} ${cloneClassName}`);
 
-                    const styleElement = document.createElement('style');
-                    styleElement.appendChild(formatPseudoElementStyle());
-                    clone.appendChild(styleElement);
+                    const selector = `.${cloneClassName}:${element}`;
+                    const cssText = style.cssText
+                        ? `${style.cssText} content: ${content};`
+                        : formatCssProperties();
 
-                    function formatPseudoElementStyle() {
-                        const selector = `.${cloneClassName}:${element}`;
-                        const cssText = style.cssText
-                            ? formatCssText()
-                            : formatCssProperties();
+                    // Inline any url() in the pseudo-element's style (a background
+                    // image, a url() `content`, a mask, …). It lives inside a <style>
+                    // rule, which the image inliner that walks element styles never
+                    // visits — so without this the external URL can't be fetched in
+                    // the standalone output and the pseudo's background drops out
+                    // (issue #16).
+                    return inliner.inlineAll(cssText).then(function (inlinedCssText) {
+                        const styleElement = document.createElement('style');
+                        styleElement.appendChild(
+                            document.createTextNode(`${selector}{${inlinedCssText}}`)
+                        );
+                        clone.appendChild(styleElement);
+                    });
 
-                        return document.createTextNode(`${selector}{${cssText}}`);
+                    function formatCssProperties() {
+                        const styleText = util
+                            .asArray(style)
+                            .map(formatProperty)
+                            .join('; ');
+                        return `${styleText};`;
 
-                        function formatCssText() {
-                            return `${style.cssText} content: ${content};`;
-                        }
-
-                        function formatCssProperties() {
-                            const styleText = util
-                                .asArray(style)
-                                .map(formatProperty)
-                                .join('; ');
-                            return `${styleText};`;
-
-                            function formatProperty(name) {
-                                const propertyValue = style.getPropertyValue(name);
-                                const propertyPriority = style.getPropertyPriority(name)
-                                    ? ' !important'
-                                    : '';
-                                return `${name}: ${propertyValue}${propertyPriority}`;
-                            }
+                        function formatProperty(name) {
+                            const propertyValue = style.getPropertyValue(name);
+                            const propertyPriority = style.getPropertyPriority(name)
+                                ? ' !important'
+                                : '';
+                            return `${name}: ${propertyValue}${propertyPriority}`;
                         }
                     }
                 }
