@@ -51,6 +51,10 @@
         // output instead of rendering everything scrolled to the top/left (issue
         // #22). Default off so existing output is unchanged.
         preserveScroll: false,
+        // Opt-in: suppress the console.error logged when a (typically cross-origin)
+        // stylesheet's cssRules cannot be read during font discovery. The failure is
+        // benign and already handled gracefully; this just quiets the noise.
+        ignoreCSSRuleErrors: false,
     };
 
     const domtoimage = {
@@ -1793,11 +1797,13 @@
                                 cssRules.push.bind(cssRules)
                             );
                         } catch (e) {
-                            console.error(
-                                'domtoimage: Error while reading CSS rules from: ' +
-                                    sheet.href,
-                                e.toString()
-                            );
+                            if (!domtoimage.impl.options.ignoreCSSRuleErrors) {
+                                console.error(
+                                    'domtoimage: Error while reading CSS rules from: ' +
+                                        sheet.href,
+                                    e.toString()
+                                );
+                            }
                         }
                     }
                 });

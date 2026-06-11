@@ -308,6 +308,15 @@ fewer cache misses, faster). Defaults to `'strict'`.
 Set to true to skip discovering and embedding `@font-face` web fonts into the output.
 Defaults to false (fonts are embedded).
 
+#### ignoreCSSRuleErrors
+
+Set to true to suppress the `console.error` that is logged when a stylesheet's CSS rules
+can't be read while discovering `@font-face` web fonts. This typically happens for
+cross-origin (CDN) stylesheets, which throw a `SecurityError` on `cssRules` access. The
+failure is benign — it's already handled gracefully and the capture still succeeds — so
+this option just quiets the repeated console noise on font-heavy pages. Defaults to false
+(errors are logged).
+
 #### httpTimeout
 
 Timeout in milliseconds for the XHR requests used to fetch external resources (images,
@@ -689,7 +698,8 @@ DOLCIMASCOLO (packaging), Zee (ZM) @zm-cttae (many major updates), Joshua Walsh
 optional), Julien Dorra @juliendorra (documentation), Sean Zhang @SeanZhang-eaton (regex
 fixes), Ludovic Bouges @ludovic (style property filter), Roland Ma @RolandMa1986 (URL
 regex)", Kasim Tan @kasimtan, Matthias Zach @matthiaszach (iframe fixes), Kamran Ayub
-@kamranayub (filter URL option)
+@kamranayub (filter URL option), Liu YuanYuan @mgenware, Davey Tran @DaveyTran, Nathan
+Fiscus @NathanFiscus
 
 ## License
 

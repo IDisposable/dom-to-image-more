@@ -105,6 +105,13 @@ declare namespace domToImage {
          */
         preserveScroll?: boolean;
         /**
+         * Suppress the `console.error` logged when a (typically cross-origin)
+         * stylesheet's `cssRules` cannot be read during font discovery. The
+         * failure is benign and already handled gracefully; this just quiets the
+         * noise. Defaults to false.
+         */
+        ignoreCSSRuleErrors?: boolean;
+        /**
          * Data URL of a placeholder image used when fetching an image fails.
          * When unset, failed images reject. Defaults to undefined.
          */
