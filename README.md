@@ -426,6 +426,30 @@ Most importantly, tests **only** depend on:
   compare images (due to the browser rendering differences) and just have to test whether
   the text is rendered
 
+#### Running the tests
+
+| Command                                             | Runs                                                           |
+| --------------------------------------------------- | -------------------------------------------------------------- |
+| `npm test`                                          | full suite, Chrome (image-comparison + logic)                  |
+| `npm run test <pattern>`                            | only tests whose title matches, e.g. `npm run test border`     |
+| `npm run test:chrome` / `npm run test:firefox`      | full suite on a specific browser                               |
+| `npm run test:logic` / `npm run test:logic:firefox` | OS-robust logic subset (skips image comparisons; what CI runs) |
+| `npm run test:node`                                 | Node/SSR smoke test (no browser)                               |
+
+`npm run test <pattern>` filters by Mocha title (describe + it) — pass a group name,
+several words (`npm run test render web fonts`), or an exact single-test name. Under the
+hood it sets `GREP`, which you can also use directly to filter any of the other scripts
+(POSIX shells / WSL): `GREP=border npm run test:firefox`.
+
+Other environment variables compose with any script:
+
+- `LOGIC_ONLY=1` — skip the image-comparison tests; `HEADLESS=1` — headless browser;
+  `KARMA_BROWSER=firefox`; `DPR=1.25` — device-pixel-ratio; `UPDATE_CONTROLS=1` — re-bake
+  the reference images (same environment only).
+
+> Firefox can't match Chrome-baked control images, so run it with `LOGIC_ONLY=1` (the
+> `test:logic:firefox` script already does).
+
 ## How it works
 
 There might some day exist (or maybe already exists?) a simple and standard way of
