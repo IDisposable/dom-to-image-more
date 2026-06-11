@@ -1089,6 +1089,7 @@
             isHTMLTextAreaElement: isHTMLTextAreaElement,
             isShadowSlotElement: isShadowSlotElement,
             isSVGElement: isSVGElement,
+            isSVGImageElement: isSVGImageElement,
             isSVGSVGElement: isSVGSVGElement,
             isSVGRectElement: isSVGRectElement,
             isSVGUseElement: isSVGUseElement,
@@ -1157,6 +1158,10 @@
 
         function isHTMLImageElement(value) {
             return isInstanceOf(value, 'HTMLImageElement');
+        }
+
+        function isSVGImageElement(value) {
+            return isInstanceOf(value, 'SVGImageElement');
         }
 
         function isHTMLInputElement(value) {
@@ -1776,6 +1781,32 @@
             }
         }
 
+        // An SVG <image> references its bitmap via href / xlink:href (not .src like
+        // an HTML <img>), so newImage misses it and the external URL would survive
+        // unfetchable in the standalone output (#121). Inline it the same way: fetch
+        // and rewrite both href forms to a data URL. Mirrors the graceful contract —
+        // a failed fetch is surfaced via onImageError (inside getAndEncode) and the
+        // node is left as-is rather than sinking the whole render.
+        function inlineSvgImage(node, get) {
+            const XLINK_NS = 'http://www.w3.org/1999/xlink';
+            const href =
+                node.getAttribute('href') ||
+                node.getAttributeNS(XLINK_NS, 'href') ||
+                node.getAttribute('xlink:href');
+            if (!href || util.isDataUrl(href)) {
+                return Promise.resolve(node);
+            }
+            return Promise.resolve(href)
+                .then(get || util.getAndEncode)
+                .then(function (dataUrl) {
+                    if (dataUrl) {
+                        node.setAttributeNS(XLINK_NS, 'xlink:href', dataUrl);
+                        node.setAttribute('href', dataUrl);
+                    }
+                    return node;
+                });
+        }
+
         function inlineAll(node) {
             if (!util.isElement(node)) {
                 return Promise.resolve(node);
@@ -1784,6 +1815,8 @@
             return inlineCSSProperty(node).then(function () {
                 if (util.isHTMLImageElement(node)) {
                     return newImage(node).inline();
+                } else if (util.isSVGImageElement(node)) {
+                    return inlineSvgImage(node);
                 } else {
                     return Promise.all(
                         util.asArray(node.childNodes).map(function (child) {

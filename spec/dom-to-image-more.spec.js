@@ -449,6 +449,41 @@
                     .catch(done);
             });
 
+            it('inlines a nested SVG <image> href (#121)', function (done) {
+                // An SVG <image> references its bitmap via href / xlink:href (not .src
+                // like an HTML <img>), so it must be fetched and embedded as a data URL
+                // too, or it survives as an unfetchable external URL in the output.
+                this.timeout(15000);
+                const url = '/base/spec/resources/images/image.png';
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<svg width="40" height="40" xmlns="http://www.w3.org/2000/svg">' +
+                            '<image id="img" href="' +
+                            url +
+                            '" width="40" height="40"></image>' +
+                            '</svg>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const image = (decoded.match(/<image[^>]*>/) || [])[0];
+                        assert.isString(image, '<image> should be in the output');
+                        assert.include(
+                            image,
+                            'data:image',
+                            'the SVG <image> href must be inlined as a data: URL'
+                        );
+                        assert.notInclude(
+                            image,
+                            'image.png',
+                            'the external href must not survive in the output'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
             // #191: a CSS `url()` set via options.style (the browser normalizes it to
             // double quotes) was serialized inside the double-quoted style attribute as
             // `url(&quot;…&quot;)`. We now emit clean single-quoted `url('…')`.
