@@ -505,7 +505,14 @@
                 ctx.imageSmoothingEnabled = false;
                 if (image) {
                     ctx.scale(scale, scale);
-                    ctx.drawImage(image, 0, 0);
+                    // Draw into an explicit width×height box rather than relying on
+                    // the image's intrinsic size. Chrome derives that intrinsic size
+                    // from the SVG's width/height attributes (so this is a no-op
+                    // there), but Firefox computes it unreliably for an
+                    // `<foreignObject>` image and otherwise crops the result to a
+                    // default/intrinsic box (issue #160). Forcing the destination
+                    // rectangle makes both engines fill the same canvas.
+                    ctx.drawImage(image, 0, 0, result.width, result.height);
                 }
                 return canvas;
             });
@@ -542,7 +549,7 @@
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
             }
 
-            return { canvas: canvas, scale: scale };
+            return { canvas: canvas, scale: scale, width: width, height: height };
         }
     }
 
@@ -1226,15 +1233,29 @@
                     // Cleanup: remove the image from the document.
                     svg.remove();
 
-                    if (window && window.requestAnimationFrame) {
-                        // In order to work around a Firefox bug (webcompat/web-bugs#119834) we
-                        // need to wait one extra frame before it's safe to read the image data.
-                        window.requestAnimationFrame(function () {
+                    function settle() {
+                        if (window && window.requestAnimationFrame) {
+                            // In order to work around a Firefox bug (webcompat/web-bugs#119834) we
+                            // need to wait one extra frame before it's safe to read the image data.
+                            window.requestAnimationFrame(function () {
+                                resolve(image);
+                            });
+                        } else {
+                            // If we don't have a window or requestAnimationFrame function proceed immediately.
                             resolve(image);
-                        });
+                        }
+                    }
+
+                    // `onload` fires once the resource is fetched, but the bitmap may
+                    // not be fully decoded yet — Firefox can read a blank/transparent
+                    // canvas from an `<foreignObject>` SVG that hasn't finished
+                    // decoding (issue #146). When available, wait for decode() to
+                    // settle first; it can reject (e.g. detached image), so fall
+                    // through to the frame-wait either way rather than failing.
+                    if (typeof image.decode === 'function') {
+                        image.decode().then(settle, settle);
                     } else {
-                        // If we don't have a window or requestAnimationFrame function proceed immediately.
-                        resolve(image);
+                        settle();
                     }
                 };
 

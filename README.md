@@ -398,8 +398,8 @@ _Internet Explorer is not (and will not be) supported, as it does not support SV
 `<foreignObject>` tag_
 
 _Safari [is not supported](https://github.com/tsayen/dom-to-image/issues/27), as it uses a
-stricter security model on `<foreignObject`> tag. Suggested workaround is to use `toSvg`
-and render on the server._`
+stricter security model on the `<foreignObject>` tag (and has flaky image-decode timing).
+The suggested workaround is to use `toSvg` and render on the server._
 
 ## Dependencies
 
@@ -564,12 +564,11 @@ need to reach into it for testing.
 
 - **High-DPI / Retina output looks soft, and very large captures can come out partial.**
   By default the output is rasterized at CSS-pixel resolution (1×). On high-DPI displays
-  that can look soft when shown at native resolution — pass
-  [pixelRatio](#pixelratio): `window.devicePixelRatio` for a crisp capture. Browsers also
-  cap canvas size; a capture whose `width × height × scale × pixelRatio` exceeds that cap
-  would otherwise yield a **partial or blank** bitmap, so the library clamps the
-  multiplier to fit and logs a warning instead (render a smaller region, or lower
-  `scale`/`pixelRatio`, if you hit it).
+  that can look soft when shown at native resolution — pass [pixelRatio](#pixelratio):
+  `window.devicePixelRatio` for a crisp capture. Browsers also cap canvas size; a capture
+  whose `width × height × scale × pixelRatio` exceeds that cap would otherwise yield a
+  **partial or blank** bitmap, so the library clamps the multiplier to fit and logs a
+  warning instead (render a smaller region, or lower `scale`/`pixelRatio`, if you hit it).
 
 - **At a fractional display scale or browser zoom (e.g. Windows 125%, or 125% page zoom),
   flex/grid layouts may be shifted by ~1px in the output.** The capture is rasterized from
@@ -586,6 +585,29 @@ need to reach into it for testing.
   This is structural to the SVG-foreignObject technique. (A regular `filter` on the
   element itself works fine; it's specifically the _backdrop_ variant that can't be
   reproduced.)
+
+- **A WebGL `<canvas>` can capture blank.** A regular 2D canvas is snapshotted fine, but a
+  WebGL context only retains its drawing buffer for reading if it was created with
+  `preserveDrawingBuffer: true` — otherwise the browser clears it after compositing and
+  the snapshot comes out empty. This is a caller-side WebGL setting; set it when you
+  create the context if you need the canvas (or any library that draws into one, e.g. some
+  map/chart renderers) to be captured. Cannot be worked around from this library.
+
+- **`<video>` frames and cross-origin content can't be captured.** A `<video>` element
+  rasterizes to nothing (and DRM/cross-origin video would taint the canvas anyway);
+  cross-origin `<iframe>` content is inaccessible to the page, so it can't be cloned. For
+  a video, capture a poster image or draw the current frame to a same-origin `<canvas>`
+  yourself and render that instead.
+
+- **Only what's actually in the DOM is captured.** Virtualized / windowed lists,
+  lazy-loaded images that haven't loaded, and other content rendered on-demand are not in
+  the live DOM at capture time, so they won't appear in the output. Fully expand/scroll
+  the content into the DOM (and let images finish loading) before rendering.
+
+- **Safari is unreliable.** Safari applies a stricter security model to SVG
+  `<foreignObject>` and has flaky image-decode timing, so captures may come out blank or
+  vary run-to-run. It is not a supported target; if you need it, prefer [toSvg](#usage)
+  and rasterize server-side. See the [Browsers](#browsers) note.
 
 ## Authors
 

@@ -256,6 +256,42 @@
                     .catch(done);
             });
 
+            it('inlines a CSS mask shorthand url (#127)', function (done) {
+                // #127: the `-webkit-mask` / `mask` *shorthand* (not just the
+                // `-image` longhand) carries the url; it must be inlined too or the
+                // masked icon renders blank in the standalone output.
+                this.timeout(15000);
+                const url = '/base/spec/resources/images/image.png';
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<i id="shortmask" style="display:inline-block;width:20px;height:20px;' +
+                            'background-color:red;-webkit-mask:url(' +
+                            url +
+                            ') center / contain no-repeat;mask:url(' +
+                            url +
+                            ') center / contain no-repeat"></i>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        const mask = (decoded.match(/<i id="shortmask"[^>]*>/) || [])[0];
+                        assert.isString(mask, 'masked icon should be in the output');
+                        assert.include(
+                            mask,
+                            'data:image',
+                            'the shorthand mask url must be inlined as a data: URL'
+                        );
+                        assert.notInclude(
+                            mask,
+                            'image.png',
+                            'the external mask url must not survive (unfetchable in the output)'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
             // #149: an icon delivered as an `@font-face` glyph via a `::before`
             // pseudo-element. The composition works — the web font is embedded and the
             // pseudo-element's `content` glyph + font-family are captured. (The original
@@ -816,6 +852,95 @@
                     .then(done)
                     .catch(function (e) {
                         cleanupReset();
+                        done(e);
+                    });
+            });
+
+            it('preserves background-clip:text into the output (#24/#26)', function (done) {
+                // background-clip:text (the gradient-text technique) used to be
+                // dropped from the copy. It must survive to the output; the library
+                // also sets the `-webkit-` alias, but engines that alias the two fold
+                // them back to a single `background-clip` on serialization, so accept
+                // either spelling here.
+                const style = document.createElement('style');
+                style.id = 'bgclip-2426';
+                style.textContent =
+                    '#clip { background-clip: text; -webkit-text-fill-color: transparent; }';
+                document.head.appendChild(style);
+
+                function cleanup() {
+                    const el = document.getElementById('bgclip-2426');
+                    if (el) {
+                        el.remove();
+                    }
+                }
+
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML = '<div id="clip">gradient</div>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const clip = (decodeURIComponent(svg).match(
+                            /<div id="clip"[^>]*style="[^"]*"/
+                        ) || [])[0];
+                        assert.isString(clip, '#clip should be in the output');
+                        assert.match(
+                            clip,
+                            /(-webkit-)?background-clip:\s*text/,
+                            'background-clip:text must survive the copy'
+                        );
+                    })
+                    .then(cleanup)
+                    .then(done)
+                    .catch(function (e) {
+                        cleanup();
+                        done(e);
+                    });
+            });
+
+            it('does not duplicate a one-sided border to other sides (#12)', function (done) {
+                // #12 (Firefox): an element with only a left border picked up the
+                // same width on the right. Per-side pinning must keep the other
+                // sides' widths from inheriting the visible side's width.
+                const style = document.createElement('style');
+                style.id = 'border-12';
+                style.textContent =
+                    '#oneside { border-left: 5px solid rgb(0, 128, 0); width: 20px; height: 20px; }';
+                document.head.appendChild(style);
+
+                function cleanup() {
+                    const el = document.getElementById('border-12');
+                    if (el) {
+                        el.remove();
+                    }
+                }
+
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML = '<div id="oneside">x</div>';
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const el = (decodeURIComponent(svg).match(
+                            /<div id="oneside"[^>]*style="[^"]*"/
+                        ) || [])[0];
+                        assert.isString(el, '#oneside should be in the output');
+                        assert.match(
+                            el,
+                            /border-left-width:\s*5px|border-left:\s*5px/,
+                            'the left border width must be preserved'
+                        );
+                        assert.notMatch(
+                            el,
+                            /border-right-width:\s*5px|border-top-width:\s*5px|border-bottom-width:\s*5px/,
+                            'no other side may inherit the left border width'
+                        );
+                    })
+                    .then(cleanup)
+                    .then(done)
+                    .catch(function (e) {
+                        cleanup();
                         done(e);
                     });
             });
@@ -1567,6 +1692,80 @@
                             root,
                             /background-color:\s*rgb\(255,\s*255,\s*0\)/,
                             'bgcolor option must be applied to the root'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            it('should fill the whole canvas to its edges (guards Firefox crop #160 / blank #146)', function (done) {
+                // A solid-color box must cover every corner of the output. Firefox
+                // could crop a <foreignObject> capture to a default intrinsic box
+                // (#160) or read a blank canvas before the image finished decoding
+                // (#146); both leave outer pixels transparent. The fixes draw into an
+                // explicit destination rectangle and await decode() before reading.
+                // Solid-color pixel sampling is OS-independent, so this guards both
+                // engines in CI (where the real Firefox crop/blank would surface).
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="fill" style="width:60px;height:40px;background-color:red"></div>';
+                        return domtoimage.toPixelData(document.getElementById('fill'));
+                    })
+                    .then(function (px) {
+                        const width = 60;
+                        function offset(x, y) {
+                            return (y * width + x) * 4;
+                        }
+                        [
+                            ['center', offset(30, 20)],
+                            ['top-left', offset(2, 2)],
+                            ['top-right', offset(57, 2)],
+                            ['bottom-left', offset(2, 37)],
+                            ['bottom-right', offset(57, 37)],
+                        ].forEach(function (sample) {
+                            const name = sample[0];
+                            const i = sample[1];
+                            assert.equal(px[i], 255, name + ' red channel');
+                            assert.equal(px[i + 1], 0, name + ' green channel');
+                            assert.equal(px[i + 2], 0, name + ' blue channel');
+                            assert.isAbove(px[i + 3], 200, name + ' opaque');
+                        });
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
+            it('should render a transform-scaled node at the reporter dimensions (issue #159)', function (done) {
+                // #159 reported a browser crash on toPng of a small (296×80) node
+                // carrying a CSS transform, with an explicit width/height and a
+                // transparent bgcolor. Those dimensions are far below any canvas cap
+                // (so the #182 clamp is irrelevant here); this reproduces the exact
+                // configuration and asserts it completes with a valid PNG instead of
+                // crashing/hanging.
+                this.timeout(30000);
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="big" style="width:296px;height:80px;' +
+                            'transform:scale(2);transform-origin:top left">scaled</div>';
+                        return domtoimage.toPng(document.getElementById('big'), {
+                            width: 296,
+                            height: 80,
+                            bgcolor: 'transparent',
+                            cacheBust: false,
+                        });
+                    })
+                    .then(function (dataUrl) {
+                        assert.match(
+                            dataUrl,
+                            /^data:image\/png/,
+                            'must produce a PNG without crashing'
+                        );
+                        assert.isAbove(
+                            dataUrl.length,
+                            'data:image/png;base64,'.length,
+                            'the PNG must carry actual image data'
                         );
                     })
                     .then(done)
