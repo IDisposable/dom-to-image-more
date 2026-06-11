@@ -570,6 +570,15 @@ need to reach into it for testing.
   loaded — e.g. `await document.fonts.ready` yourself, or wait for the `<link>`'s `load`
   event, before capturing.
 
+- **Server-side rendering (SSR) needs a browser DOM.** The library renders by reading
+  computed styles and rasterizing through the browser, so it cannot run where there is no
+  `document` (Angular Universal, Next.js server, plain Node). It **imports** safely under
+  SSR, but a render call (`toPng`/`toSvg`/…) rejects with a clear
+  `a browser DOM is required (SSR)` error rather than a raw `ReferenceError`. Run the
+  capture only in the browser — e.g. guard with Angular's `isPlatformBrowser`, a
+  `typeof window !== 'undefined'` check, or a dynamic import in a client-only lifecycle
+  hook. (jsdom works if you pass a node that belongs to a jsdom document.)
+
 - if the DOM node you want to render includes a `<canvas>` element with something drawn on
   it, it should be handled fine, unless the canvas is
   [tainted](https://developer.mozilla.org/en-US/docs/Web/HTML/CORS_enabled_image) - in

@@ -128,6 +128,17 @@
 
         svgRefsToInline = [];
 
+        // Rendering needs a live DOM. Under SSR (Angular Universal, Next.js, …)
+        // there is no document, so fail with a short, catchable error instead of a
+        // raw ReferenceError deep in the pipeline (issue #83; see the README "Things
+        // to watch out for" note on SSR). A real node — incl. jsdom — carries its
+        // own document via ownerWindow, so this only trips when genuinely DOM-less.
+        if (!ownerWindow || !ownerWindow.document) {
+            return Promise.reject(
+                new Error('dom-to-image-more: a browser DOM is required (SSR)')
+            );
+        }
+
         return waitForDocumentFonts()
             .then(function () {
                 return ensureElement(node);
@@ -1099,10 +1110,15 @@
 
         function getWindow(node) {
             const ownerDocument = node ? node.ownerDocument : undefined;
+            // Bare `window`/`global` references throw a ReferenceError under SSR
+            // (e.g. Angular Universal) where neither exists; guard with typeof and
+            // fall back to globalThis (issue #83). A real node still resolves to its
+            // own document's window first, so jsdom keeps working.
             return (
                 (ownerDocument ? ownerDocument.defaultView : undefined) ||
-                window ||
-                global
+                (typeof window !== 'undefined' ? window : undefined) ||
+                (typeof global !== 'undefined' ? global : undefined) ||
+                globalThis
             );
         }
 
