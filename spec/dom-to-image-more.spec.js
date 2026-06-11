@@ -1879,6 +1879,11 @@
             });
 
             it('should not crash when loading external stylesheet causes error', function (done) {
+                // The fixture links a real cross-origin stylesheet (Google Fonts) to
+                // exercise the SecurityError-on-cssRules path. loadTestPage now awaits
+                // that <link> (up to its 5s safety) before rendering, so on a slow CI
+                // network this needs more than the 2s default mocha timeout.
+                this.timeout(15000);
                 loadTestPage('ext-css/dom-node.html', 'ext-css/style.css')
                     .then(renderToPng)
                     .then(() => done())
