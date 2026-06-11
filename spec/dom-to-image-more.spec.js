@@ -601,7 +601,7 @@
                         const style = document.createElement('style');
                         style.id = 's149';
                         style.textContent =
-                            "@font-face { font-family: 'Ico149'; src: url('/base/test-lib/fontawesome/webfonts/fa-solid-900.woff2') format('woff2'); }" +
+                            "@font-face { font-family: 'Ico149'; src: url('/base/tests/fontawesome/webfonts/fa-solid-900.woff2') format('woff2'); }" +
                             '#icon::before { content: "\\2605"; font-family: "Ico149"; font-size: 30px; }';
                         document.head.appendChild(style);
                         function cleanup() {

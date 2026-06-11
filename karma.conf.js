@@ -74,17 +74,17 @@ module.exports = function (config) {
                 served: true,
             },
             {
-                pattern: 'test-lib/fontawesome/webfonts/*.*',
+                pattern: 'tests/fontawesome/webfonts/*.*',
                 included: false,
                 served: true,
             },
             {
-                pattern: 'test-lib/fontawesome/css/*.*',
+                pattern: 'tests/fontawesome/css/*.*',
                 included: false,
                 served: true,
             },
 
-            'test-lib/tesseract-4.0.2.min.js',
+            'tests/tesseract-4.0.2.min.js',
 
             'src/dom-to-image-more.js',
             'spec/dom-to-image-more.spec.js',

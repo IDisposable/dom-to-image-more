@@ -1,7 +1,0 @@
-paths-ignore:
-    - dist
-    - lib
-    - tests
-    - test-lib
-    - '**/*.test.ts'
-    - '**/testing-util.ts'
