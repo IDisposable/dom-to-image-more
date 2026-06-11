@@ -1109,6 +1109,43 @@
                         }
                     );
 
+                    it('preserveScroll reflects a scrolled container (#22)', function (done) {
+                        // A scrolled container normally renders its top/left; with
+                        // preserveScroll the content is shifted to the actual scroll
+                        // position. Scroll a 100x50 viewport past a red block so a blue
+                        // block is in view — the center pixel must come out blue.
+                        loadTestPage()
+                            .then(function () {
+                                domNode().innerHTML =
+                                    '<div id="sc" style="width:100px;height:50px;overflow:auto">' +
+                                    '<div style="width:100px;height:100px;background-color:red"></div>' +
+                                    '<div style="width:100px;height:100px;background-color:blue"></div>' +
+                                    '</div>';
+                                const sc = document.getElementById('sc');
+                                sc.scrollTop = 100;
+                                return domtoimage.toPixelData(sc, {
+                                    preserveScroll: true,
+                                });
+                            })
+                            .then(function (px) {
+                                const width = 100;
+                                const i = (25 * width + 50) * 4; // center of the viewport
+                                assert.isAbove(
+                                    px[i + 2],
+                                    200,
+                                    'blue channel high (scrolled-in block)'
+                                );
+                                assert.isBelow(
+                                    px[i],
+                                    80,
+                                    'red channel low (top block scrolled away)'
+                                );
+                                assert.isAbove(px[i + 3], 200, 'opaque');
+                            })
+                            .then(done)
+                            .catch(done);
+                    });
+
                     it('should render a transform-scaled node at the reporter dimensions (issue #159)', function (done) {
                         // #159 reported a browser crash on toPng of a small (296×80) node
                         // carrying a CSS transform, with an explicit width/height and a

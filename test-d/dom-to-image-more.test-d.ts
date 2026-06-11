@@ -26,6 +26,7 @@ const opts: Options = {
     quality: 0.92,
     scale: 2,
     pixelRatio: 2,
+    preserveScroll: true,
     cacheBust: true,
     styleCaching: 'relaxed',
     copyDefaultStyles: false,

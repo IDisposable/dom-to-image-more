@@ -357,6 +357,21 @@ canvas size limit, the multiplier is clamped to fit and a warning is logged, so 
 capture degrades predictably instead of coming out partial or blank (see _Things to watch
 out for_).
 
+#### preserveScroll
+
+By default every scrollable element is rendered scrolled to its top/left. Set
+`preserveScroll: true` to reflect each element's current `scrollLeft`/`scrollTop` instead,
+so the output matches what's actually scrolled into view:
+
+```javascript
+domtoimage.toPng(node, { preserveScroll: true });
+```
+
+It's opt-in (default `false`) so existing output is unchanged. Implemented by clipping
+each scrolled element and translating its content by the scroll offset — which works for
+normal flow and flex/grid content; deeply transformed or `position: fixed` descendants
+inside a scroll container are the edge cases.
+
 ### Alternative Solutions to CORS Policy Issue
 
 Are you facing a [CORS policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS)

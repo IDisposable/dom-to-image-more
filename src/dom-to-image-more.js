@@ -47,6 +47,10 @@
         // window.devicePixelRatio for crisp high-DPI/Retina output. Composes with
         // `scale` (effective multiplier = scale * pixelRatio).
         pixelRatio: 1,
+        // Opt-in: reflect each scrollable element's current scroll position in the
+        // output instead of rendering everything scrolled to the top/left (issue
+        // #22). Default off so existing output is unchanged.
+        preserveScroll: false,
     };
 
     const domtoimage = {
@@ -772,12 +776,44 @@
                 .then(clonePseudoElements)
                 .then(copyUserInput)
                 .then(sanitizeAttributes)
+                .then(preserveScroll)
                 .then(fixSvg)
                 .then(fixTableCaption)
                 .then(fixResponsiveImages)
                 .then(function () {
                     return clone;
                 });
+
+            // Opt-in (issue #22): a scrolled element re-lays-out at scroll 0 inside the
+            // <foreignObject>, so the output shows the top/left instead of what's
+            // actually scrolled into view. Scroll position is a runtime property that
+            // doesn't serialize, so instead clip the clone and shift its children up/
+            // left by the original's scroll offset — a post-layout visual translate that
+            // works for normal flow and flex/grid alike (no fragile content wrapping).
+            // Composes with any transform the child already carries.
+            function preserveScroll() {
+                if (!options.preserveScroll || !clone.style) {
+                    return;
+                }
+                const scrollLeft = original.scrollLeft || 0;
+                const scrollTop = original.scrollTop || 0;
+                if (scrollLeft === 0 && scrollTop === 0) {
+                    return;
+                }
+                // Clip to the element's box without painting interactive scrollbars.
+                clone.style.overflow = 'hidden';
+                const shift = `translate(${-scrollLeft}px, ${-scrollTop}px)`;
+                util.asArray(clone.children).forEach(function (child) {
+                    if (!child.style) {
+                        return;
+                    }
+                    const existing =
+                        child.style.transform && child.style.transform !== 'none'
+                            ? ` ${child.style.transform}`
+                            : '';
+                    child.style.transform = `${shift}${existing}`;
+                });
+            }
 
             // Malformed source HTML (e.g. `<div id="x"">`) makes the parser create
             // attributes whose names are illegal in XML — a lone `"` here. Serialized
