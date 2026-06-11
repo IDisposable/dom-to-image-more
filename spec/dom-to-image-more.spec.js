@@ -2666,6 +2666,51 @@
                         .catch(done);
                 });
 
+                it('requestInterceptor short-circuits the fetch when it returns a value — issue #242', function (done) {
+                    const supplied = 'data:text/plain;base64,SGVsbG8=';
+                    domtoimage.impl.options.requestInterceptor = function () {
+                        return supplied;
+                    };
+                    // A URL that would otherwise fail to fetch; the interceptor
+                    // value is used instead, proving the network was skipped.
+                    domtoimage.impl.util
+                        .getAndEncode('http://example.com/intercepted-no-fetch.png')
+                        .then(function (resource) {
+                            assert.equal(resource, supplied);
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
+                it('requestInterceptor may return a promise of the resource — issue #242', function (done) {
+                    const supplied = 'data:text/plain;base64,V29ybGQ=';
+                    domtoimage.impl.options.requestInterceptor = function () {
+                        return Promise.resolve(supplied);
+                    };
+                    domtoimage.impl.util
+                        .getAndEncode('http://example.com/intercepted-promise.png')
+                        .then(function (resource) {
+                            assert.equal(resource, supplied);
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
+                it('requestInterceptor returning undefined falls through to the normal fetch — issue #242', function (done) {
+                    domtoimage.impl.options.requestInterceptor = function () {
+                        return undefined;
+                    };
+                    // Falls through to a normal (failing) fetch, which resolves to
+                    // an empty string — same as the no-interceptor not-found case.
+                    domtoimage.impl.util
+                        .getAndEncode(`${BASE_URL}util/not-found?interceptor=passthrough`)
+                        .then(function (resource) {
+                            assert.equal(resource, '');
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
                 it('should resolve url', function () {
                     const resolve = domtoimage.impl.util.resolveUrl;
 

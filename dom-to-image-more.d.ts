@@ -168,6 +168,14 @@ declare namespace domToImage {
         httpTimeout?: number;
         /** Configuration for routing cross-origin images through a proxy. */
         corsImg?: CorsImgOptions;
+        /**
+         * Intercept any external-resource fetch (images and fonts). Called with
+         * the resource URL; return a data URL string (or a promise of one) to use
+         * it and skip the network request, or `undefined` to fall through to the
+         * normal fetch. Useful for serving resources from a cache, supplying test
+         * fixtures, or implementing a custom resolver.
+         */
+        requestInterceptor?: (url: string) => string | Promise<string> | undefined;
     }
 
     interface DomToImage {

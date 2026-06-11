@@ -55,6 +55,11 @@
         // stylesheet's cssRules cannot be read during font discovery. The failure is
         // benign and already handled gracefully; this just quiets the noise.
         ignoreCSSRuleErrors: false,
+        // Optional hook to intercept any external-resource fetch. Called with the
+        // URL; if it returns a defined value (a data URL string, or a promise of
+        // one) that value is used and the network request is skipped. Return
+        // undefined to fall through to the normal fetch.
+        requestInterceptor: undefined,
     };
 
     const domtoimage = {
@@ -1441,6 +1446,19 @@
             }
 
             if (cacheEntry.promise === null) {
+                // Let callers supply the resource themselves (cache, fixtures,
+                // custom resolver) for any URL, short-circuiting the network. A
+                // defined return is cached like a normal fetch; undefined falls
+                // through. The value may be a data URL string or a promise of one.
+                const interceptor = domtoimage.impl.options.requestInterceptor;
+                if (typeof interceptor === 'function') {
+                    const intercepted = interceptor(url);
+                    if (typeof intercepted !== 'undefined') {
+                        cacheEntry.promise = Promise.resolve(intercepted);
+                        return cacheEntry.promise;
+                    }
+                }
+
                 if (domtoimage.impl.options.cacheBust) {
                     // Cache bypass so we don't have CORS issues with cached images
                     // Source: https://developer.mozilla.org/en/docs/Web/API/XMLHttpRequest/Using_XMLHttpRequest#Bypassing_the_cache

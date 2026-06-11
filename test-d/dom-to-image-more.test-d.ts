@@ -43,6 +43,8 @@ const opts: Options = {
     adjustClonedNode: (_n: Node, clone: Node, _after: boolean) => clone,
     onclone: (_clone: Node) => undefined,
     corsImg: { url: 'p', method: 'POST', headers: { a: 'b' } },
+    requestInterceptor: (url: string) =>
+        url.startsWith('cached:') ? 'data:,' : undefined,
     onImageError: (info: ImageErrorInfo) => {
         const u: string = info.url;
         const s: number = info.status;

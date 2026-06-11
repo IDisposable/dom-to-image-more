@@ -345,6 +345,28 @@ body, with `#{cors}` substituted in any string values). See
 [Alternative Solutions to CORS Policy Issue](#alternative-solutions-to-cors-policy-issue)
 below. Defaults to undefined.
 
+#### requestInterceptor
+
+A function that lets you intercept any external-resource fetch (both images and
+`@font-face` fonts). It is called with the resource URL; return a `data:` URL string (or a
+promise of one) to supply the resource yourself and skip the network request, or return
+`undefined` to fall through to the normal fetch. The result is cached like a normal fetch.
+This is useful for serving resources from an in-memory/app cache, supplying deterministic
+fixtures in tests, or implementing a custom resolver. Defaults to undefined.
+
+```javascript
+domtoimage.toPng(node, {
+    requestInterceptor: (url) => {
+        if (myCache.has(url)) {
+            return myCache.get(url); // a data: URL string (or a Promise of one)
+        }
+        return undefined; // fetch normally
+    },
+});
+```
+
+It runs before `corsImg` rewriting and the normal XHR, so returning a value bypasses both.
+
 #### scale
 
 Scale value to be applied on canvas's `ctx.scale()` on both x and y axis. Can be used to
