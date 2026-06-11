@@ -128,8 +128,10 @@
 
         svgRefsToInline = [];
 
-        return Promise.resolve(node)
-            .then(ensureElement)
+        return waitForDocumentFonts()
+            .then(function () {
+                return ensureElement(node);
+            })
             .then(function (clonee) {
                 return cloneNode(clonee, options, null, ownerWindow);
             })
@@ -139,6 +141,48 @@
             .then(applyOptions)
             .then(makeSvgDataUri)
             .finally(cleanup);
+
+        // Wait for any web fonts already loading in the source document to settle
+        // before we read computed styles, clone, and rasterize — a capture taken
+        // while the page's own fonts are mid-load would otherwise measure/snapshot
+        // fallback glyphs (wrong metrics, or missing icon glyphs). The CSS Font
+        // Loading API is not universal (older browsers, SSR/jsdom), so feature-detect;
+        // race a timeout (httpTimeout) so a perpetually-pending font can't hang. If
+        // the timeout wins we render anyway but warn, since the result may be missing
+        // glyphs or laid out with fallback metrics.
+        function waitForDocumentFonts() {
+            const doc = ownerWindow.document;
+            if (!doc.fonts || !doc.fonts.ready) {
+                return Promise.resolve();
+            }
+            const cap = domtoimage.impl.options.httpTimeout || 30000;
+            let timer;
+            const ready = Promise.resolve(doc.fonts.ready).then(
+                function () {
+                    return false;
+                },
+                function () {
+                    return false;
+                }
+            );
+            const timeout = new Promise(function (resolve) {
+                timer = ownerWindow.setTimeout(function () {
+                    resolve(true);
+                }, cap);
+            });
+            return Promise.race([ready, timeout]).then(function (timedOut) {
+                ownerWindow.clearTimeout(timer);
+                if (timedOut) {
+                    console.warn(
+                        'dom-to-image-more: timed out after ' +
+                            cap +
+                            'ms waiting for document fonts to finish loading ' +
+                            '(document.fonts.ready); rendering anyway — the output ' +
+                            'may have missing glyphs or fallback-font metrics.'
+                    );
+                }
+            });
+        }
 
         function ensureElement(node) {
             if (node.nodeType === ELEMENT_NODE) return node;

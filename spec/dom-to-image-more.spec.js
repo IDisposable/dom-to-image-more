@@ -1493,22 +1493,11 @@
 
             it('should apply styles from an external stylesheet', function (done) {
                 // sheet/dom-node.html only contains a <link> to sheet.css, which
-                // sets #dom-node { background-color: red }. The rendered output must
-                // reflect the externally-loaded rule (not just inline/embedded CSS).
+                // sets #dom-node { background-color: red }. loadTestPage awaits the
+                // <link> (a real page is loaded before capture), so the rule is in the
+                // CSSOM by the time we render — no per-test wait needed.
                 this.timeout(5000);
                 loadTestPage('sheet/dom-node.html', 'sheet/style.css')
-                    .then(function () {
-                        // The <link>ed sheet loads asynchronously and loadTestPage
-                        // does not await it; wait until the rule actually applies
-                        // before rendering (cold headless Firefox can be slow to
-                        // fetch it, otherwise the capture races the load).
-                        return waitForCondition(function () {
-                            return (
-                                getComputedStyle(domNode()).backgroundColor ===
-                                'rgb(255, 0, 0)'
-                            );
-                        }, 4000);
-                    })
                     .then(function () {
                         return renderToSvg(domNode());
                     })
@@ -1529,7 +1518,7 @@
             });
 
             itImage('should render web fonts', function (done) {
-                this.timeout(5000);
+                this.timeout(8000);
                 loadTestPage(
                     'fonts/dom-node.html',
                     'fonts/style.css',
@@ -1541,7 +1530,7 @@
             });
 
             itImage('should not copy web font', function (done) {
-                this.timeout(5000);
+                this.timeout(8000);
                 loadTestPage(
                     'fonts/dom-node.html',
                     'fonts/style.css',
@@ -1549,6 +1538,35 @@
                 )
                     .then(() => renderToPng(domNode(), { disableEmbedFonts: true }))
                     .then(check)
+                    .then(done)
+                    .catch(done);
+            });
+
+            it('embeds a web font as a data URL once the stylesheet has loaded (#web-fonts)', function (done) {
+                // Regression guard for the 3.9.0 release flake: the FontAwesome glyph
+                // went missing because dom-to-image read document.styleSheets before
+                // the async all.css <link> had parsed, so no @font-face was found and
+                // no font was inlined. loadTestPage now awaits the <link> (a real page
+                // is loaded before capture), making the embed deterministic. The
+                // assertion is OS-independent, so it runs in CI on both engines.
+                this.timeout(8000);
+                loadTestPage('fonts/dom-node.html', 'fonts/style.css')
+                    .then(function () {
+                        return renderToSvg(domNode());
+                    })
+                    .then(function (svg) {
+                        const decoded = decodeURIComponent(svg);
+                        assert.include(
+                            decoded,
+                            '@font-face',
+                            'the web font face must be inlined into the output'
+                        );
+                        assert.match(
+                            decoded,
+                            /url\(\s*['"]?data:[^)]*base64/,
+                            'the font binary must be embedded as a data URL'
+                        );
+                    })
                     .then(done)
                     .catch(done);
             });
@@ -2844,8 +2862,16 @@
                     if (!html) return document;
 
                     return getResource(html).then(function (html) {
-                        document.querySelector('#dom-node').innerHTML = html;
-                        return document;
+                        const host = document.querySelector('#dom-node');
+                        host.innerHTML = html;
+                        // A real user captures a page that has finished loading. The
+                        // fixture HTML may include <link rel=stylesheet> (e.g. the web
+                        // font test's all.css) which loads asynchronously; await it so
+                        // its rules — including @font-face — are in the CSSOM before any
+                        // test renders, instead of racing the load.
+                        return awaitStyleLinks(host).then(function () {
+                            return document;
+                        });
                     });
                 })
                 .then(function (document) {
@@ -2870,28 +2896,27 @@
                 });
         }
 
-        // Poll `predicate` once per animation frame until it returns truthy or the
-        // timeout elapses. Used to await asynchronously-applied state (e.g. an
-        // external <link> stylesheet that loadTestPage does not block on).
-        function waitForCondition(predicate, timeoutMs) {
-            const deadline = Date.now() + (timeoutMs || 2000);
-            return new Promise(function (resolve, reject) {
-                (function poll() {
-                    let satisfied = false;
-                    try {
-                        satisfied = predicate();
-                    } catch (_e) {
-                        satisfied = false;
+        // Wait for every <link rel=stylesheet> inside `container` to finish loading
+        // (its .sheet becomes available), so the fixture behaves like a fully-loaded
+        // page before a test renders. A loaded sheet resolves immediately; a pending
+        // one resolves on load/error, with a safety timeout so a missing file can't
+        // hang the suite.
+        function awaitStyleLinks(container) {
+            const links = Array.prototype.slice.call(
+                container.querySelectorAll('link[rel="stylesheet"]')
+            );
+            return Promise.all(
+                links.map(function (link) {
+                    if (link.sheet) {
+                        return Promise.resolve();
                     }
-                    if (satisfied) {
-                        resolve();
-                    } else if (Date.now() > deadline) {
-                        reject(new Error('waitForCondition timed out'));
-                    } else {
-                        requestAnimationFrame(poll);
-                    }
-                })();
-            });
+                    return new Promise(function (resolve) {
+                        link.addEventListener('load', resolve, { once: true });
+                        link.addEventListener('error', resolve, { once: true });
+                        setTimeout(resolve, 5000);
+                    });
+                })
+            );
         }
 
         function loadPage() {

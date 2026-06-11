@@ -536,6 +536,16 @@ need to reach into it for testing.
 
 ## Things to watch out for
 
+- **Capture a fully-loaded page.** Before rasterizing, the library waits for web fonts the
+  document is already loading (`document.fonts.ready`), so a capture taken while your
+  fonts are mid-download still gets the real glyphs and correct metrics. It **cannot**
+  wait for a stylesheet you have not finished loading, though: if you add a
+  `<link rel="stylesheet">` (e.g. an icon font) and call `toPng`/`toSvg` in the same tick,
+  its `@font-face` rules may not be in the CSSOM yet, so the font won't be found or
+  embedded and the glyph will be missing. Render after the page (and its stylesheets) have
+  loaded — e.g. `await document.fonts.ready` yourself, or wait for the `<link>`'s `load`
+  event, before capturing.
+
 - if the DOM node you want to render includes a `<canvas>` element with something drawn on
   it, it should be handled fine, unless the canvas is
   [tainted](https://developer.mozilla.org/en-US/docs/Web/HTML/CORS_enabled_image) - in
