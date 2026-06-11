@@ -2833,6 +2833,75 @@
                     }
                 });
 
+                // Shared helper: run readAll() against a single stylesheet that
+                // throws SecurityError on cssRules access (the cross-origin case),
+                // capturing whether console.error fired. Restores both the native
+                // styleSheets accessor and console.error before resolving.
+                function readAllWithThrowingSheet(options) {
+                    function ThrowingSheet() {}
+                    Object.defineProperty(ThrowingSheet.prototype, 'cssRules', {
+                        get: function () {
+                            throw new DOMException('blocked', 'SecurityError');
+                        },
+                    });
+                    const sheet = new ThrowingSheet();
+                    sheet.href = 'https://accounts.google.com/gsi/style';
+
+                    const originalError = console.error;
+                    let errorCount = 0;
+                    console.error = function () {
+                        errorCount += 1;
+                    };
+
+                    Object.defineProperty(document, 'styleSheets', {
+                        configurable: true,
+                        get: function () {
+                            return [sheet];
+                        },
+                    });
+
+                    domtoimage.impl.copyOptions(options);
+
+                    // getCssRules accesses cssRules (and so logs) in a later
+                    // microtask, not synchronously, so restore only once readAll has
+                    // fully settled — a synchronous finally would put console.error
+                    // back before the throwing access happens.
+                    function restore() {
+                        delete document.styleSheets; // restore native accessor
+                        console.error = originalError;
+                        domtoimage.impl.copyOptions({});
+                    }
+
+                    return fontFaces.impl.readAll().then(
+                        function () {
+                            restore();
+                            return errorCount;
+                        },
+                        function (e) {
+                            restore();
+                            throw e;
+                        }
+                    );
+                }
+
+                it('logs the cssRules read failure by default — issue #241', function (done) {
+                    readAllWithThrowingSheet({})
+                        .then(function (errorCount) {
+                            assert.isAbove(errorCount, 0);
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
+                it('ignoreCSSRuleErrors:true suppresses the cssRules read failure log — issue #241', function (done) {
+                    readAllWithThrowingSheet({ ignoreCSSRuleErrors: true })
+                        .then(function (errorCount) {
+                            assert.equal(errorCount, 0);
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
                 function assertSomeIncludesAll(haystacks, needles) {
                     const found = haystacks.some(function (haystack) {
                         return needles.every(function (needle) {

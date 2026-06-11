@@ -27,6 +27,7 @@ const opts: Options = {
     scale: 2,
     pixelRatio: 2,
     preserveScroll: true,
+    ignoreCSSRuleErrors: true,
     cacheBust: true,
     styleCaching: 'relaxed',
     copyDefaultStyles: false,
