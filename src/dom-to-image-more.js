@@ -771,12 +771,35 @@
                 .then(cloneStyle)
                 .then(clonePseudoElements)
                 .then(copyUserInput)
+                .then(sanitizeAttributes)
                 .then(fixSvg)
                 .then(fixTableCaption)
                 .then(fixResponsiveImages)
                 .then(function () {
                     return clone;
                 });
+
+            // Malformed source HTML (e.g. `<div id="x"">`) makes the parser create
+            // attributes whose names are illegal in XML — a lone `"` here. Serialized
+            // into the XHTML <foreignObject> they produce invalid markup that fails to
+            // rasterize (issue #152). No valid attribute name can contain a quote,
+            // `=`, `<`, `>`, `/`, or whitespace, so drop any such attribute and let the
+            // capture succeed instead of erroring.
+            function sanitizeAttributes() {
+                if (!clone.attributes || !clone.removeAttribute) {
+                    return;
+                }
+                const illegal = [];
+                for (let i = 0; i < clone.attributes.length; i += 1) {
+                    const name = clone.attributes[i].name;
+                    if (/["'=<>/\s]/.test(name)) {
+                        illegal.push(name);
+                    }
+                }
+                illegal.forEach(function (name) {
+                    clone.removeAttribute(name);
+                });
+            }
 
             // An <img> contributes its height from the loaded bitmap's aspect ratio.
             // If the source image hasn't decoded yet (e.g. loading="lazy", or simply

@@ -1251,6 +1251,34 @@
                     .catch(done);
             });
 
+            it('renders malformed-attribute markup without erroring (#152)', function (done) {
+                // A lone quote in the source HTML makes the parser create an attribute
+                // literally named `"`, which is illegal in XML. Serialized into the
+                // <foreignObject> it produced invalid markup that failed to rasterize
+                // with an opaque error. The bad attribute is now stripped during
+                // cloning so the capture succeeds and a valid PNG comes back.
+                this.timeout(30000);
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML = '<div id="x"">hello</div>';
+                        // sanity: the parser really did create the illegal-named attr
+                        assert.isTrue(
+                            domNode().firstElementChild.hasAttribute('"'),
+                            'precondition: parser created an attribute named with a quote'
+                        );
+                        return domtoimage.toPng(domNode());
+                    })
+                    .then(function (dataUrl) {
+                        assert.match(
+                            dataUrl,
+                            /^data:image\/png/,
+                            'malformed markup must still produce a PNG, not reject'
+                        );
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
             itImage('should render to svg', function (done) {
                 loadTestPage(
                     'small/dom-node.html',
