@@ -34,6 +34,7 @@
         "test": "grunt test --debug",
         "test:logic": "LOGIC_ONLY=1 grunt test",
         "test:logic:firefox": "KARMA_BROWSER=firefox LOGIC_ONLY=1 grunt test",
+        "test:node": "node test-node/ssr-smoke.js",
         "test:types": "tsc --noEmit --strict --esModuleInterop --lib dom,es2020 test-d/dom-to-image-more.test-d.ts",
         "build": "grunt",
         "build:ci": "grunt ci",
