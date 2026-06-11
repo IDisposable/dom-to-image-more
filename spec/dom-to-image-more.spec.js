@@ -1191,6 +1191,31 @@
                     .catch(done);
             });
 
+            it('does not crop a captured node by its own margin (#38)', function (done) {
+                // The captured element's own margin offsets it inside the fixed-size
+                // foreignObject, pushing content out of the canvas. A 40x40 box with a
+                // 40px top margin would otherwise render entirely below the canvas
+                // (blank). The root's margin must be neutralized so it fills the output.
+                this.timeout(30000);
+                loadTestPage()
+                    .then(function () {
+                        domNode().innerHTML =
+                            '<div id="m" style="width:40px;height:40px;' +
+                            'background-color:red;margin:40px 0 0 20px"></div>';
+                        return domtoimage.toPixelData(document.getElementById('m'));
+                    })
+                    .then(function (px) {
+                        const width = 40;
+                        const i = (20 * width + 20) * 4; // center pixel
+                        assert.equal(px[i], 255, 'center red channel');
+                        assert.equal(px[i + 1], 0, 'center green channel');
+                        assert.equal(px[i + 2], 0, 'center blue channel');
+                        assert.isAbove(px[i + 3], 200, 'center opaque');
+                    })
+                    .then(done)
+                    .catch(done);
+            });
+
             itImage('should render to svg', function (done) {
                 loadTestPage(
                     'small/dom-node.html',

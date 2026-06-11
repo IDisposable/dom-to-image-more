@@ -278,6 +278,13 @@
         }
 
         function applyOptions(clone) {
+            // The captured root's own margin would offset it inside the fixed-size
+            // <foreignObject> and clip it out of the canvas (issue #38). Neutralize
+            // it on the root only (descendant margins drive internal layout and are
+            // left intact). A user can still set one explicitly via options.style.
+            if (clone.style) {
+                clone.style.margin = '0';
+            }
             if (options.bgcolor) {
                 clone.style.backgroundColor = options.bgcolor;
             }
