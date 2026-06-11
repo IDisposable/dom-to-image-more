@@ -441,6 +441,15 @@ several words (`npm run test render web fonts`), or an exact single-test name. U
 hood it sets `GREP`, which you can also use directly to filter any of the other scripts
 (POSIX shells / WSL): `GREP=border npm run test:firefox`.
 
+The suite is grouped so a name targets a slice of it:
+
+- **`rendering`** — `content` (`svg`, `images`, `fonts`, `text`), `layout` (`sizing`,
+  `styles`, `visibility`), `api` (`output formats`, `options`, `user input`), `robustness`
+- **`impl`** — `inliner`, `util`, `fontFaces`, `image loading`, `style keys`
+
+So `npm run test fonts`, `npm run test layout`, `npm run test impl`, or
+`npm run test #205` (issue numbers live in the test titles) all work.
+
 Other environment variables compose with any script:
 
 - `LOGIC_ONLY=1` — skip the image-comparison tests; `HEADLESS=1` — headless browser;
