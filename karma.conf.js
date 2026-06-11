@@ -57,6 +57,10 @@ module.exports = function (config) {
     // image-comparison tests will then differ from the 1x controls — regenerate with
     // UPDATE_CONTROLS=1 at that DPR if you intend to re-baseline).
     const deviceScaleFactor = process.env.DPR || '1';
+    // Run only the tests whose full Mocha title (describe + it) matches this
+    // substring/regex, e.g. `GREP=border npm run test:chrome` for one group, or a
+    // single test by its exact name. Empty (default) runs everything.
+    const grep = process.env.GREP || '';
 
     config.set({
         basePath: '',
@@ -99,6 +103,8 @@ module.exports = function (config) {
             updateControls: updateControls,
             // Tells the spec's `itImage` helper to skip image-comparison tests.
             logicOnly: logicOnly,
+            // Mocha options; `grep` (from GREP env) runs only matching tests.
+            mocha: grep ? { grep: grep } : {},
         },
 
         // Register the updater plugin, but only insert it into the request
