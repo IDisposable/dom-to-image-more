@@ -30,14 +30,7 @@ jobs:
               uses: github/codeql-action/init@v4
               with:
                   languages: ${{ matrix.language }}
-                  config: |
-                    paths-ignore:
-                        - dist
-                        - lib
-                        - tests
-                        - test-lib
-                        - "**/*.test.ts"
-                        - "**/testing-util.ts"
+                  config-file: ./.github/codeql/codeql-config.yml
             - name: Autobuild
               uses: github/codeql-action/autobuild@v4
             - name: Perform CodeQL Analysis
