@@ -98,6 +98,13 @@ declare namespace domToImage {
          */
         pixelRatio?: number;
         /**
+         * Reflect each scrollable element's current scroll position
+         * (`scrollLeft`/`scrollTop`) in the output, instead of rendering
+         * everything scrolled to the top/left. Opt-in; defaults to `false` so
+         * existing output is unchanged.
+         */
+        preserveScroll?: boolean;
+        /**
          * Data URL of a placeholder image used when fetching an image fails.
          * When unset, failed images reject. Defaults to undefined.
          */
