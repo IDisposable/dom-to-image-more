@@ -37,6 +37,7 @@ correctly across `<iframe>` boundaries).
 | `isHTMLStyleElement(value)`             | an `HTMLStyleElement`                                                                                                   |
 | `isHTMLTextAreaElement(value)`          | an `HTMLTextAreaElement`                                                                                                |
 | `isSVGElement(value)`                   | an `SVGElement`                                                                                                         |
+| `isSVGImageElement(value)`              | an `SVGImageElement` (a nested SVG `<image>`, whose `href`/`xlink:href` is inlined)                                     |
 | `isSVGSVGElement(value)`                | an `SVGSVGElement` (an `<svg>` root; non-root SVG elements take a different render path)                                |
 | `isSVGRectElement(value)`               | an `SVGRectElement`                                                                                                     |
 | `isSVGUseElement(value)`                | an `SVGUseElement` (a `<use>` referencing an element to inline)                                                         |
@@ -97,8 +98,9 @@ Computed pixel height of `node`. Same strategy as `width`, using
 `(node?: Node) => Window`
 
 Returns the `Window` that owns `node` (`node.ownerDocument.defaultView`), falling back to
-the global `window`, then `global`. Tolerates a missing/`undefined` `node`. Underpins the
-cross-realm type guards.
+`window`, then `global`, then `globalThis`. Each fallback is `typeof`-guarded so it does
+not throw under SSR (Angular Universal, Next.js, plain Node) where `window`/`global` may
+be absent. Tolerates a missing/`undefined` `node`. Underpins the cross-realm type guards.
 
 ---
 
@@ -134,8 +136,10 @@ Fetches a resource and resolves to a **data URL** (base64). Key behaviors:
 Loads `uri` into an `Image` (wrapped in an offscreen `<svg>` appended to `document.body`)
 and resolves once it has loaded. Returns `undefined` for the empty data URL `data:,`.
 Applies `crossOrigin = 'use-credentials'` when the `useCredentials` option is set. Removes
-the temporary node on load/error, and waits one `requestAnimationFrame` before resolving
-to work around a Firefox image-data timing bug.
+the temporary node on load/error; before resolving it awaits `image.decode()` (when
+available) and then one `requestAnimationFrame`, so the bitmap is fully decoded before a
+canvas reads it — guarding the Firefox/Safari blank-render timing race (issues #146,
+#192).
 
 ### `canvasToBlob(canvas)`
 
@@ -203,6 +207,7 @@ collides.
 | `isHTMLTextAreaElement`          | type guard | `boolean`                                |
 | `isShadowSlotElement`            | type guard | `boolean`                                |
 | `isSVGElement`                   | type guard | `boolean`                                |
+| `isSVGImageElement`              | type guard | `boolean`                                |
 | `isSVGSVGElement`                | type guard | `boolean`                                |
 | `isSVGRectElement`               | type guard | `boolean`                                |
 | `isSVGUseElement`                | type guard | `boolean`                                |

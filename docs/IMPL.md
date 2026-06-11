@@ -13,7 +13,7 @@ domtoimage.impl;
 | ------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
 | `util`        | object   | Low-level helpers (type guards, geometry, URL/resource fetching). Documented separately in [UTILS.md](UTILS.md). |
 | `fontFaces`   | object   | Discovers `@font-face` web fonts and inlines them as `data:` URLs.                                               |
-| `images`      | object   | Inlines `<img>` sources and CSS `background`/`background-image` URLs.                                            |
+| `images`      | object   | Inlines `<img>` and SVG `<image>` sources and CSS `background`/`background-image`/`mask` URLs.                   |
 | `inliner`     | object   | The URL-rewriting engine shared by `fontFaces` and `images`.                                                     |
 | `urlCache`    | array    | Per-session cache of fetched resources, keyed by URL.                                                            |
 | `options`     | object   | The **live, resolved** options for the current/last render.                                                      |
@@ -63,10 +63,10 @@ Each _web font_ object returned by `readAll()` exposes:
 
 Produced by `newImages()`.
 
-| Member                   | Signature                                         | Summary                                                                                                                                                                                           |
-| ------------------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `inlineAll(node)`        | `(node: Node) => Promise<…>`                      | Recursively walks `node`, inlining the CSS `background`/`background-image` URLs on every element and replacing `<img>` `src` values with `data:` URLs. Non-element nodes pass through untouched.  |
-| `impl.newImage(element)` | `(element: HTMLImageElement) => { inline(get?) }` | Wraps a single image element. `inline(get?)` fetches `element.src` (via `get`, defaulting to `util.getAndEncode`) and swaps in the resulting `data:` URL; already-`data:` sources are left as-is. |
+| Member                   | Signature                                         | Summary                                                                                                                                                                                                                                                   |
+| ------------------------ | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inlineAll(node)`        | `(node: Node) => Promise<…>`                      | Recursively walks `node`, inlining the CSS `background`/`background-image`/`mask` URLs on every element, replacing HTML `<img>` `src` values with `data:` URLs, and inlining SVG `<image>` `href`/`xlink:href`. Non-element nodes pass through untouched. |
+| `impl.newImage(element)` | `(element: HTMLImageElement) => { inline(get?) }` | Wraps a single image element. `inline(get?)` fetches `element.src` (via `get`, defaulting to `util.getAndEncode`) and swaps in the resulting `data:` URL; already-`data:` sources are left as-is.                                                         |
 
 ## `impl.inliner`
 
