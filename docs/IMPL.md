@@ -9,15 +9,16 @@ parts. It is **not** part of the stable public API (`toSvg`, `toPng`, `toJpeg`, 
 domtoimage.impl;
 ```
 
-| Member        | Kind     | Summary                                                                                                          |
-| ------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
-| `util`        | object   | Low-level helpers (type guards, geometry, URL/resource fetching). Documented separately in [UTILS.md](UTILS.md). |
-| `fontFaces`   | object   | Discovers `@font-face` web fonts and inlines them as `data:` URLs.                                               |
-| `images`      | object   | Inlines `<img>` and SVG `<image>` sources and CSS `background`/`background-image`/`mask` URLs.                   |
-| `inliner`     | object   | The URL-rewriting engine shared by `fontFaces` and `images`.                                                     |
-| `urlCache`    | array    | Per-session cache of fetched resources, keyed by URL.                                                            |
-| `options`     | object   | The **live, resolved** options for the current/last render.                                                      |
-| `copyOptions` | function | Merges caller options over the defaults into `impl.options`.                                                     |
+| Member          | Kind     | Summary                                                                                                                  |
+| --------------- | -------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `util`          | object   | Low-level helpers (type guards, geometry, URL/resource fetching). Documented separately in [UTILS.md](UTILS.md).         |
+| `fontFaces`     | object   | Discovers `@font-face` web fonts and inlines them as `data:` URLs.                                                       |
+| `images`        | object   | Inlines `<img>` and SVG `<image>` sources and CSS `background`/`background-image`/`mask` URLs.                           |
+| `inliner`       | object   | The URL-rewriting engine shared by `fontFaces` and `images`.                                                             |
+| `urlCache`      | array    | Per-render cache of fetched resources, keyed by URL.                                                                     |
+| `options`       | object   | The **live, resolved** options for the current/last render.                                                              |
+| `copyOptions`   | function | Merges caller options over the defaults into `impl.options`.                                                             |
+| `resetUrlCache` | function | Clears `urlCache`. Called at the start/end of a render; exposed for tests/advanced callers driving the helpers directly. |
 
 ---
 
@@ -83,10 +84,11 @@ and rewrites them to inlined `data:` URLs. Used by both `fontFaces` and `images`
 
 ## `impl.urlCache`
 
-An array used by `util.getAndEncode` to dedupe and cache resource fetches within a
-session. Each entry is `{ url: string, promise: Promise<string> | null }`; repeat requests
-for the same URL share the same in-flight/settled promise. There is no automatic eviction
-— it lives for the lifetime of the module.
+An array used by the resource fetch core (behind `util.getAndEncode` and
+`util.getResourceText`) to dedupe and cache fetches within a render. Each entry is
+`{ url: string, promise: Promise | null }`; repeat requests for the same URL share the
+same in-flight/settled promise. It is cleared at the start/end of each render (and via
+`impl.resetUrlCache()`), so each capture fetches fresh.
 
 ---
 

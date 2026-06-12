@@ -3259,6 +3259,167 @@
                         .catch(done);
                 });
 
+                // Run readAll() against a single unreadable cross-origin stylesheet
+                // (cssRules throws) that has an href, optionally mocking the network
+                // fetch of its text as a Blob. Returns the @font-face `src` values
+                // discovered. Restores document.styleSheets, XMLHttpRequest, options.
+                function readAllWithExternalSheet(options, fetchedCss) {
+                    function ThrowingSheet() {}
+                    Object.defineProperty(ThrowingSheet.prototype, 'cssRules', {
+                        configurable: true,
+                        get: function () {
+                            throw new DOMException('blocked', 'SecurityError');
+                        },
+                    });
+                    const sheet = new ThrowingSheet();
+                    sheet.href = 'https://fonts.example.com/family.css';
+
+                    const originalXHR = global.XMLHttpRequest;
+                    if (fetchedCss !== null) {
+                        global.XMLHttpRequest = function () {
+                            const mockXHR = {
+                                readyState: XMLHttpRequest.UNSENT,
+                                status: 200,
+                                response: new Blob([fetchedCss], {
+                                    type: 'text/css',
+                                }),
+                                onloadend: null,
+                                onerror: null,
+                                ontimeout: null,
+                                responseType: '',
+                                timeout: 0,
+                                withCredentials: false,
+                                open: function () {},
+                                send: function () {
+                                    setTimeout(function () {
+                                        mockXHR.readyState = XMLHttpRequest.DONE;
+                                        if (mockXHR.onloadend) {
+                                            mockXHR.onloadend();
+                                        }
+                                    }, 0);
+                                },
+                                setRequestHeader: function () {},
+                            };
+                            return mockXHR;
+                        };
+                    }
+
+                    Object.defineProperty(document, 'styleSheets', {
+                        configurable: true,
+                        get: function () {
+                            return [sheet];
+                        },
+                    });
+                    domtoimage.impl.copyOptions(options);
+                    // These tests reuse one href and call readAll() directly (no render
+                    // to reset the cache), so clear it to avoid cross-test cache hits.
+                    domtoimage.impl.resetUrlCache();
+
+                    function restore() {
+                        delete document.styleSheets;
+                        global.XMLHttpRequest = originalXHR;
+                        domtoimage.impl.copyOptions({});
+                        domtoimage.impl.resetUrlCache();
+                    }
+
+                    return fontFaces.impl.readAll().then(
+                        function (webFonts) {
+                            restore();
+                            return webFonts.map(function (webFont) {
+                                return webFont.src();
+                            });
+                        },
+                        function (e) {
+                            restore();
+                            throw e;
+                        }
+                    );
+                }
+
+                it('loadExternalStyleSheet:true loads an unreadable cross-origin sheet so its @font-face is found — issue #243', function (done) {
+                    const css =
+                        '@font-face { font-family: "Ext243";' +
+                        ' src: url(https://fonts.example.com/ext.woff2); }';
+                    readAllWithExternalSheet({ loadExternalStyleSheet: true }, css)
+                        .then(function (sources) {
+                            assert.isTrue(
+                                sources.some(function (s) {
+                                    return s.indexOf('ext.woff2') !== -1;
+                                }),
+                                'the external @font-face must be discovered'
+                            );
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
+                it('an unreadable cross-origin sheet is skipped when loadExternalStyleSheet is off — issue #243', function (done) {
+                    readAllWithExternalSheet({ ignoreCSSRuleErrors: true }, null)
+                        .then(function (sources) {
+                            assert.equal(
+                                sources.length,
+                                0,
+                                'no fonts are discovered when the option is off'
+                            );
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
+                it('loadExternalStyleSheet predicate can decline a sheet — issue #243', function (done) {
+                    const css =
+                        '@font-face { font-family: "Ext243b";' +
+                        ' src: url(https://fonts.example.com/extb.woff2); }';
+                    readAllWithExternalSheet(
+                        {
+                            ignoreCSSRuleErrors: true,
+                            loadExternalStyleSheet: function () {
+                                return false;
+                            },
+                        },
+                        css
+                    )
+                        .then(function (sources) {
+                            assert.equal(
+                                sources.length,
+                                0,
+                                'a declined sheet must not be loaded'
+                            );
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
+                it('requestInterceptor can supply an external stylesheet even with the option off (model B) — issue #243', function (done) {
+                    const css =
+                        '@font-face { font-family: "Ext243c";' +
+                        ' src: url(https://fonts.example.com/extc.woff2); }';
+                    const dataUrl = 'data:text/css;base64,' + btoa(css);
+                    readAllWithExternalSheet(
+                        {
+                            ignoreCSSRuleErrors: true,
+                            requestInterceptor: function (url, context) {
+                                return context.type ===
+                                    domtoimage.ResourceType.STYLESHEET &&
+                                    url.indexOf('family.css') !== -1
+                                    ? dataUrl
+                                    : undefined;
+                            },
+                        },
+                        null
+                    )
+                        .then(function (sources) {
+                            assert.isTrue(
+                                sources.some(function (s) {
+                                    return s.indexOf('extc.woff2') !== -1;
+                                }),
+                                'the interceptor-supplied stylesheet font must be discovered'
+                            );
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
                 function assertSomeIncludesAll(haystacks, needles) {
                     const found = haystacks.some(function (haystack) {
                         return needles.every(function (needle) {

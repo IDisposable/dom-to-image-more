@@ -185,6 +185,15 @@ declare namespace domToImage {
          * resources. Defaults to 30000.
          */
         httpTimeout?: number;
+        /**
+         * Fetch and re-parse cross-origin stylesheets whose `cssRules` can't be read
+         * directly, so their `@font-face` web fonts can be discovered and embedded.
+         * `false` (default) keeps the current behavior of skipping unreadable sheets;
+         * `true` fetches every unreadable cross-origin sheet; a predicate
+         * `(href) => boolean` scopes which ones. Adds a network fetch per matched
+         * sheet and degrades quietly if the fetch is itself CORS-blocked or fails.
+         */
+        loadExternalStyleSheet?: boolean | ((href: string) => boolean);
         /** Configuration for routing cross-origin images through a proxy. */
         corsImg?: CorsImgOptions;
         /**
