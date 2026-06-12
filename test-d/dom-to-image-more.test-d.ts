@@ -44,6 +44,15 @@ const opts: Options = {
     imagePlaceholder: 'data:,',
     filter: (n: Node) => n.nodeType === 1,
     filterStyles: (n: Node, p: string) => !p.startsWith('--'),
+    adjustPseudoElement: (
+        _n: Node,
+        pseudo: ':before' | ':after',
+        style: CSSStyleDeclaration
+    ) => {
+        if (pseudo === ':after') return false;
+        if (style.getPropertyValue('content').includes('—')) return { content: '"-"' };
+        return undefined;
+    },
     adjustClonedNode: (_n: Node, clone: Node, _after: boolean) => clone,
     onclone: (_clone: Node) => undefined,
     corsImg: { url: 'p', method: 'POST', headers: { a: 'b' } },

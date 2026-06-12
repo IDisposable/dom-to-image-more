@@ -485,6 +485,188 @@
                             });
                     });
 
+                    it('adjustPseudoElement returning false drops a ::after pseudo-element (#244)', function (done) {
+                        const style = document.createElement('style');
+                        style.id = 'pf244';
+                        style.textContent =
+                            '#pf244host::before { content: "KEEPBEFORE244"; }' +
+                            ' #pf244host::after { content: "DROPAFTER244"; }';
+                        document.head.appendChild(style);
+                        function cleanup() {
+                            const el = document.getElementById('pf244');
+                            if (el) {
+                                el.remove();
+                            }
+                        }
+                        loadTestPage()
+                            .then(function () {
+                                domNode().innerHTML = '<div id="pf244host">x</div>';
+                                return renderToSvg(domNode(), {
+                                    adjustPseudoElement: function (node, pseudo) {
+                                        return node.id === 'pf244host' &&
+                                            pseudo === ':after'
+                                            ? false
+                                            : undefined;
+                                    },
+                                });
+                            })
+                            .then(function (svg) {
+                                const decoded = decodeURIComponent(svg);
+                                assert.include(
+                                    decoded,
+                                    'KEEPBEFORE244',
+                                    'the kept ::before content must survive'
+                                );
+                                assert.notInclude(
+                                    decoded,
+                                    'DROPAFTER244',
+                                    'the filtered-out ::after must not be recreated'
+                                );
+                            })
+                            .then(cleanup)
+                            .then(done)
+                            .catch(function (e) {
+                                cleanup();
+                                done(e);
+                            });
+                    });
+
+                    it('adjustPseudoElement receives the node, pseudo, and style; true keeps it (#244)', function (done) {
+                        const style = document.createElement('style');
+                        style.id = 'pf244b';
+                        style.textContent =
+                            '#pf244bhost::before { content: "BOTH244"; }' +
+                            ' #pf244bhost::after { content: "BOTH244"; }';
+                        document.head.appendChild(style);
+                        const seen = [];
+                        function cleanup() {
+                            const el = document.getElementById('pf244b');
+                            if (el) {
+                                el.remove();
+                            }
+                        }
+                        loadTestPage()
+                            .then(function () {
+                                domNode().innerHTML = '<div id="pf244bhost">x</div>';
+                                return renderToSvg(domNode(), {
+                                    adjustPseudoElement: function (node, pseudo, s) {
+                                        seen.push({
+                                            id: node && node.id,
+                                            pseudo: pseudo,
+                                            hasStyle:
+                                                typeof s.getPropertyValue === 'function',
+                                        });
+                                        return true;
+                                    },
+                                });
+                            })
+                            .then(function (svg) {
+                                const pseudos = seen
+                                    .filter(function (c) {
+                                        return c.id === 'pf244bhost';
+                                    })
+                                    .map(function (c) {
+                                        return c.pseudo;
+                                    });
+                                assert.include(pseudos, ':before');
+                                assert.include(pseudos, ':after');
+                                assert.isTrue(
+                                    seen.every(function (c) {
+                                        return c.hasStyle;
+                                    }),
+                                    'style argument must be a CSSStyleDeclaration'
+                                );
+                                assert.include(
+                                    decodeURIComponent(svg),
+                                    'BOTH244',
+                                    'returning true keeps the pseudo-elements'
+                                );
+                            })
+                            .then(cleanup)
+                            .then(done)
+                            .catch(function (e) {
+                                cleanup();
+                                done(e);
+                            });
+                    });
+
+                    it('adjustPseudoElement returning overrides tweaks the pseudo (em-dash → hyphen) (#244)', function (done) {
+                        const style = document.createElement('style');
+                        style.id = 'pf244c';
+                        style.textContent =
+                            '#pf244chost::before { content: "EMDASH\\2014END244"; }';
+                        document.head.appendChild(style);
+                        function cleanup() {
+                            const el = document.getElementById('pf244c');
+                            if (el) {
+                                el.remove();
+                            }
+                        }
+                        loadTestPage()
+                            .then(function () {
+                                domNode().innerHTML = '<div id="pf244chost">x</div>';
+                                return renderToSvg(domNode(), {
+                                    adjustPseudoElement: function (node, pseudo) {
+                                        // swap the em-dash glyph for a hyphen on the
+                                        // host's ::before
+                                        return node.id === 'pf244chost' &&
+                                            pseudo === ':before'
+                                            ? { content: '"HYPHEN-END244"' }
+                                            : undefined;
+                                    },
+                                });
+                            })
+                            .then(function (svg) {
+                                assert.include(
+                                    decodeURIComponent(svg),
+                                    'HYPHEN-END244',
+                                    'the content override must be applied (and win)'
+                                );
+                            })
+                            .then(cleanup)
+                            .then(done)
+                            .catch(function (e) {
+                                cleanup();
+                                done(e);
+                            });
+                    });
+
+                    it('adjustPseudoElement returning an empty object keeps the pseudo unchanged (#244)', function (done) {
+                        const style = document.createElement('style');
+                        style.id = 'pf244d';
+                        style.textContent =
+                            '#pf244dhost::before { content: "EMPTYOBJ244"; }';
+                        document.head.appendChild(style);
+                        function cleanup() {
+                            const el = document.getElementById('pf244d');
+                            if (el) {
+                                el.remove();
+                            }
+                        }
+                        loadTestPage()
+                            .then(function () {
+                                domNode().innerHTML = '<div id="pf244dhost">x</div>';
+                                return renderToSvg(domNode(), {
+                                    adjustPseudoElement: function () {
+                                        return {}; // adjust nothing — keep as-is
+                                    },
+                                });
+                            })
+                            .then(function (svg) {
+                                assert.include(
+                                    decodeURIComponent(svg),
+                                    'EMPTYOBJ244',
+                                    'an empty overrides object must keep the pseudo'
+                                );
+                            })
+                            .then(cleanup)
+                            .then(done)
+                            .catch(function (e) {
+                                cleanup();
+                                done(e);
+                            });
+                    });
+
                     it('emits clean url() quotes for background-image (#191)', function (done) {
                         // #191: a CSS `url()` set via options.style (the browser normalizes it to
                         // double quotes) was serialized inside the double-quoted style attribute as

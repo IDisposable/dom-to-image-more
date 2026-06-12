@@ -34,6 +34,10 @@
         filterStyles: undefined,
         // Callback to filter urls to be downloaded and inlined in the output
         filterUrls: undefined,
+        // Callback to drop or adjust a ::before/::after pseudo-element; receives
+        // (node, pseudo, style) and may return false to drop it, an object of CSS
+        // property overrides to tweak it, or undefined/true to keep it as-is
+        adjustPseudoElement: undefined,
         // Callback invoked when a resource (image/font) cannot be fetched; receives
         // { url, message, status, willUsePlaceholder }. Purely observational — the
         // render still degrades gracefully (placeholder or empty string).
@@ -1010,13 +1014,45 @@
                         return undefined;
                     }
 
+                    // Let callers drop or adjust a pseudo-element. The callback gets
+                    // the source node, which pseudo (':before'/':after'), and its
+                    // computed style; it may return `false` to drop the pseudo, an
+                    // object of CSS property overrides to tweak it (an empty object
+                    // `{}` is allowed and changes nothing), or `undefined`/`true` to
+                    // keep it unchanged. (Only fired for pseudo-elements that have
+                    // content, so it can't synthesize one from nothing.)
+                    let overrides;
+                    if (options.adjustPseudoElement) {
+                        const decision = options.adjustPseudoElement(
+                            original,
+                            element,
+                            style
+                        );
+                        if (decision === false) {
+                            return undefined;
+                        }
+                        if (decision && typeof decision === 'object') {
+                            overrides = decision;
+                        }
+                    }
+
                     const currentClass = clone.getAttribute('class') || '';
                     clone.setAttribute('class', `${currentClass} ${cloneClassName}`);
 
                     const selector = `.${cloneClassName}:${element}`;
-                    const cssText = style.cssText
+                    let cssText = style.cssText
                         ? `${style.cssText} content: ${content};`
                         : formatCssProperties();
+
+                    // Append caller overrides last so they win (later declarations
+                    // take precedence in CSS). Keys are CSS property names.
+                    if (overrides) {
+                        cssText += Object.keys(overrides)
+                            .map(function (name) {
+                                return ` ${name}: ${overrides[name]};`;
+                            })
+                            .join('');
+                    }
 
                     // Inline any url() in the pseudo-element's style (a background
                     // image, a url() `content`, a mask, …). It lives inside a <style>

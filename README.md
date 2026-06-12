@@ -244,6 +244,40 @@ filterUrls(url, baseUrl) {
 }
 ```
 
+#### adjustPseudoElement
+
+A function to **drop or adjust** a `::before`/`::after` pseudo-element as it is recreated
+in the output. It receives the source node, which pseudo (`':before'` or `':after'`), and
+the pseudo-element's computed style, and may return:
+
+- **`false`** — drop the pseudo-element (don't recreate it);
+- **an object of CSS property overrides** (keyed by CSS property name) — apply them on top
+  of the computed style (later declarations win, so they override the defaults); an empty
+  object `{}` is allowed and changes nothing;
+- **`undefined` / `true`** (or omit the option) — keep the pseudo-element unchanged.
+
+It is only called for pseudo-elements that have `content`, so it can adjust an existing
+pseudo-element but not synthesize one from nothing (use
+[adjustClonedNode](#adjustclonednode) or [onclone](#onclone) to add real elements). To
+remove a pseudo-element, return `false` rather than overriding its `content` to
+`none`/empty (which would still emit an empty rule). Defaults to undefined.
+
+Sample use:
+
+```javascript
+adjustPseudoElement(node, pseudo, style) {
+    // swap an em-dash glyph for a hyphen, drop a decorative overlay,
+    // and leave everything else untouched
+    if (style.getPropertyValue('content').includes('—')) {
+        return { content: '"-"' };
+    }
+    if (pseudo === ':after' && node.classList.contains('decoration')) {
+        return false;
+    }
+    return undefined;
+}
+```
+
 #### adjustClonedNode
 
 A function that will be invoked on each node as they are cloned. Useful to adjust nodes in
@@ -865,7 +899,8 @@ optional), Julien Dorra @juliendorra (documentation), Sean Zhang @SeanZhang-eato
 fixes), Ludovic Bouges @ludovic (style property filter), Roland Ma @RolandMa1986 (URL
 regex)", Kasim Tan @kasimtan, Matthias Zach @matthiaszach (iframe fixes), Kamran Ayub
 @kamranayub (filter URL option), Liu YuanYuan @mgenware, Davey Tran @DaveyTran, Nathan
-Fiscus @NathanFiscus
+Fiscus @NathanFiscus (requestInterceptor), TechValidate @TechValidate (pseudo-element
+filter)
 
 ## License
 

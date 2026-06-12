@@ -53,6 +53,21 @@ declare namespace domToImage {
          */
         filterStyles?: (node: Node, propertyName: string) => boolean;
         /**
+         * Drop or adjust a `::before`/`::after` pseudo-element as it is recreated in
+         * the clone. Receives the source node, which pseudo (`':before'` or
+         * `':after'`), and the pseudo-element's computed style. Return `false` to drop
+         * it, an object of CSS property overrides (keyed by CSS property name, e.g.
+         * `{ content: '"-"' }`; an empty object `{}` changes nothing) to tweak it, or
+         * `undefined`/`true` to keep it unchanged. Only called for pseudo-elements
+         * that have `content` (so it can adjust an existing pseudo, but not synthesize
+         * one from nothing).
+         */
+        adjustPseudoElement?: (
+            node: Node,
+            pseudoElement: ':before' | ':after',
+            style: CSSStyleDeclaration
+        ) => boolean | void | Record<string, string>;
+        /**
          * Invoked on each node as it is cloned, before the `onclone` callback.
          * Receives the original node, the cloned node, and a boolean that is
          * `true` once the children have already been cloned. The return value
