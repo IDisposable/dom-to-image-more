@@ -313,6 +313,28 @@ The cloned DOM might differ a lot from the original DOM, for example canvas will
 replaced with image tags, some class might have changed, the style are inlined. It can be
 useful to log the clone to get a better senses of the transformations.
 
+Because `onclone` hands you the whole clone after every node has been processed, it's also
+the place to **substitute or replace nodes wholesale** — there's no separate per-node
+"factory" hook because `onclone` already covers it. For example, swap an element that
+won't rasterize on its own (a WebGL/`<canvas>` you've drawn yourself, a `<video>`, or a
+custom element — see [Things to watch out for](#things-to-watch-out-for)) with your own
+image:
+
+```javascript
+domtoimage.toPng(node, {
+    onclone: (clone) => {
+        clone.querySelectorAll('canvas, video, my-widget').forEach((el) => {
+            const img = new Image();
+            img.src = myRasterize(el); // e.g. el.toDataURL() for a 2D canvas
+            el.replaceWith(img);
+        });
+    },
+});
+```
+
+To _drop_ a node (and its subtree) entirely, prefer [filter](#filter); to _mutate_ a clone
+as it's created, prefer [adjustClonedNode](#adjustclonednode).
+
 #### bgcolor
 
 A string value for the background color, any valid CSS color value.
