@@ -1,6 +1,6 @@
 {
     "name": "dom-to-image-more",
-    "version": "3.10.0-beta.0",
+    "version": "3.10.0",
     "description": "Generates an image from a DOM node using HTML5 canvas and SVG",
     "main": "dist/dom-to-image-more.min.js",
     "types": "dom-to-image-more.d.ts",

@@ -42,7 +42,7 @@ surface (which is **not** public API — see the `impl` note under
 
 ## What's New
 
-### 3.10
+### 3.10.0
 
 - **[`requestInterceptor`](#requestinterceptor)** — a single hook to supply or recover any
   external resource (images, fonts, and stylesheets), consulted both before the fetch and
@@ -50,6 +50,8 @@ surface (which is **not** public API — see the `impl` note under
   [`domtoimage.ResourceType`](#resource-types) for the resource kind. See the
   [3.10 Breaking Changes](#310-breaking-changes) note for the related `impl.getAndEncode`
   / `imagePlaceholder` adjustment.
+- **[`adjustPseudoElement`](#adjustpseudoelement)** — drop or tweak a `::before`/`::after`
+  pseudo-element as it's recreated in the output (#244).
 - **[`loadExternalStyleSheet`](#loadexternalstylesheet)** — opt in to fetching and
   re-parsing cross-origin stylesheets so their `@font-face` web fonts can be discovered
   and embedded (#243).
