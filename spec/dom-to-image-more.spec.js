@@ -2556,6 +2556,7 @@
                         'url(http://acme.com/image.png), url(foo.com)',
                         'http://acme.com/image.png',
                         NO_BASE_URL,
+                        undefined,
                         function () {
                             return Promise.resolve('data:image/png;base64,AAA');
                         }
@@ -2577,6 +2578,7 @@
                         'url(images/image.png)',
                         'images/image.png',
                         'http://acme.com/',
+                        undefined,
                         function (url) {
                             return Promise.resolve(
                                 {
@@ -2599,6 +2601,7 @@
                     inlineAll(
                         'url(http://acme.com/image.png), url("foo.com/font.ttf")',
                         NO_BASE_URL,
+                        undefined,
                         function (url) {
                             return Promise.resolve(
                                 {
@@ -2658,9 +2661,181 @@
                     domtoimage.impl.copyOptions({}); // since we're bypassing the normal options flow
                     domtoimage.impl.options.imagePlaceholder = validPlaceholder;
                     domtoimage.impl.util
-                        .getAndEncode(`${BASE_URL}util/not-found?should-be=placeholder`)
+                        .getAndEncode(
+                            `${BASE_URL}util/not-found?should-be=placeholder`,
+                            domtoimage.ResourceType.IMAGE
+                        )
                         .then(function (resource) {
                             assert.equal(resource, validPlaceholder);
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
+                it('exposes the ResourceType constants used by requestInterceptor — issue #242', function () {
+                    assert.isFrozen(domtoimage.ResourceType);
+                    assert.equal(domtoimage.ResourceType.IMAGE, 'image');
+                    assert.equal(domtoimage.ResourceType.CSS_IMAGE, 'css-image');
+                    assert.equal(domtoimage.ResourceType.FONT, 'font');
+                    assert.equal(domtoimage.ResourceType.STYLESHEET, 'stylesheet');
+                });
+
+                it('requestInterceptor short-circuits the fetch when it returns a value (status undefined = before) — issue #242', function (done) {
+                    const supplied = 'data:text/plain;base64,SGVsbG8=';
+                    let seen = null;
+                    domtoimage.impl.options.requestInterceptor = function (url, context) {
+                        seen = {
+                            url: url,
+                            type: context.type,
+                            status: context.status,
+                        };
+                        return supplied;
+                    };
+                    // A URL that would otherwise fail to fetch; the interceptor value
+                    // is used instead, proving the network was skipped.
+                    domtoimage.impl.util
+                        .getAndEncode(
+                            'http://example.com/intercepted-no-fetch.png',
+                            domtoimage.ResourceType.IMAGE
+                        )
+                        .then(function (resource) {
+                            assert.equal(resource, supplied);
+                            assert.equal(
+                                seen.url,
+                                'http://example.com/intercepted-no-fetch.png'
+                            );
+                            assert.equal(seen.type, domtoimage.ResourceType.IMAGE);
+                            assert.isUndefined(seen.status); // before-fetch phase
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
+                it('requestInterceptor may return a promise of the resource — issue #242', function (done) {
+                    const supplied = 'data:text/plain;base64,V29ybGQ=';
+                    domtoimage.impl.options.requestInterceptor = function (url) {
+                        return url.indexOf('promise') !== -1
+                            ? Promise.resolve(supplied)
+                            : undefined;
+                    };
+                    domtoimage.impl.util
+                        .getAndEncode('http://example.com/intercepted-promise.png')
+                        .then(function (resource) {
+                            assert.equal(resource, supplied);
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
+                it('requestInterceptor returning undefined falls through to the normal fetch — issue #242', function (done) {
+                    domtoimage.impl.options.requestInterceptor = function () {
+                        return undefined;
+                    };
+                    // Falls through to a normal (failing) fetch, which resolves to
+                    // an empty string — same as the no-interceptor not-found case.
+                    domtoimage.impl.util
+                        .getAndEncode(`${BASE_URL}util/not-found?interceptor=passthrough`)
+                        .then(function (resource) {
+                            assert.equal(resource, '');
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
+                it('requestInterceptor recovers a failed fetch (numeric status), taking precedence over imagePlaceholder — issue #242', function (done) {
+                    const recovered = 'data:text/plain;base64,UkVDT1ZFUg==';
+                    domtoimage.impl.options.imagePlaceholder = validPlaceholder;
+                    domtoimage.impl.options.requestInterceptor = function (url, context) {
+                        // Recover only on the failure call (numeric status), not the
+                        // pre-fetch call (status undefined).
+                        if (context.status === undefined) {
+                            return undefined;
+                        }
+                        return url.indexOf('recover') !== -1 ? recovered : undefined;
+                    };
+                    domtoimage.impl.util
+                        .getAndEncode(
+                            `${BASE_URL}util/not-found?interceptor=recover`,
+                            domtoimage.ResourceType.IMAGE
+                        )
+                        .then(function (resource) {
+                            assert.equal(resource, recovered);
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
+                it('requestInterceptor returning undefined on failure falls back to imagePlaceholder (image) — issue #242', function (done) {
+                    domtoimage.impl.options.imagePlaceholder = validPlaceholder;
+                    domtoimage.impl.options.requestInterceptor = function () {
+                        return undefined;
+                    };
+                    domtoimage.impl.util
+                        .getAndEncode(
+                            `${BASE_URL}util/not-found?interceptor=placeholder-fallback`,
+                            domtoimage.ResourceType.IMAGE
+                        )
+                        .then(function (resource) {
+                            assert.equal(resource, validPlaceholder);
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
+                it('imagePlaceholder is NOT used for a failed font — it drops so the CSS fallback applies — issue #242', function (done) {
+                    domtoimage.impl.options.imagePlaceholder = validPlaceholder;
+                    domtoimage.impl.util
+                        .getAndEncode(
+                            `${BASE_URL}util/not-found?type=font`,
+                            domtoimage.ResourceType.FONT
+                        )
+                        .then(function (resource) {
+                            // No placeholder substituted for a font; resolves empty.
+                            assert.equal(resource, '');
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
+                it('requestInterceptor receives the resource type and a status that signals the phase — issue #242', function (done) {
+                    let beforeCtx = null;
+                    let errorCtx = null;
+                    let seenUrl = null;
+                    const requestUrl = `${BASE_URL}util/not-found?interceptor=context`;
+                    domtoimage.impl.options.requestInterceptor = function (url, context) {
+                        seenUrl = url;
+                        if (context.status === undefined) {
+                            beforeCtx = context;
+                        } else {
+                            errorCtx = context;
+                        }
+                        return undefined;
+                    };
+                    domtoimage.impl.util
+                        .getAndEncode(requestUrl, domtoimage.ResourceType.FONT)
+                        .then(function () {
+                            assert.equal(seenUrl, requestUrl);
+                            assert.isNotNull(beforeCtx);
+                            assert.equal(beforeCtx.type, domtoimage.ResourceType.FONT);
+                            assert.isUndefined(beforeCtx.status); // before the fetch
+                            assert.isNotNull(errorCtx);
+                            assert.equal(errorCtx.type, domtoimage.ResourceType.FONT);
+                            assert.equal(errorCtx.status, 404); // failed fetch
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
+                it("a throwing requestInterceptor is caught and doesn't break the render — issue #242", function (done) {
+                    domtoimage.impl.options.requestInterceptor = function () {
+                        throw new Error('boom');
+                    };
+                    // The throw is swallowed in both calls, so it behaves like no
+                    // interceptor: fetch fails and resolves to an empty string.
+                    domtoimage.impl.util
+                        .getAndEncode(`${BASE_URL}util/not-found?interceptor=throws`)
+                        .then(function (resource) {
+                            assert.equal(resource, '');
                         })
                         .then(done)
                         .catch(done);
@@ -2972,7 +3147,8 @@
 
                         domtoimage.impl.util
                             .getAndEncode(
-                                'http://example.com/test-image-with-placeholder.png'
+                                'http://example.com/test-image-with-placeholder.png',
+                                domtoimage.ResourceType.IMAGE
                             )
                             .then(function (resource) {
                                 assert.equal(resource, validPlaceholder);
@@ -3019,7 +3195,8 @@
 
                         domtoimage.impl.util
                             .getAndEncode(
-                                'http://example.com/test-image-without-placeholder.png'
+                                'http://example.com/test-image-without-placeholder.png',
+                                domtoimage.ResourceType.IMAGE
                             )
                             .then(function (resource) {
                                 // Should return empty string when status is 0 and no placeholder
@@ -3074,7 +3251,7 @@
 
                         const url = 'http://example.com/onImageError-no-placeholder.png';
                         domtoimage.impl.util
-                            .getAndEncode(url)
+                            .getAndEncode(url, domtoimage.ResourceType.IMAGE)
                             .then(function (resource) {
                                 assert.equal(resource, '');
                                 assert.ok(
@@ -3112,7 +3289,7 @@
                         const url =
                             'http://example.com/onImageError-with-placeholder.png';
                         domtoimage.impl.util
-                            .getAndEncode(url)
+                            .getAndEncode(url, domtoimage.ResourceType.IMAGE)
                             .then(function (resource) {
                                 assert.equal(resource, validPlaceholder);
                                 assert.ok(

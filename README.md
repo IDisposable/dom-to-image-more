@@ -6,24 +6,6 @@
 [![GitHub Repo stars](https://img.shields.io/github/stars/1904labs/dom-to-image-more?style=social)](https://github.com/1904labs/dom-to-image-more)
 [![Twitter](https://img.shields.io/twitter/follow/idisposable.svg?style=social&label=Follow)](https://www.twitter.com/idisposable)
 
-## Breaking Change Notice
-
-The 3.x release branch included some breaking changes in the very infrequently used
-ability to configure some utility methods used in this internal processing of
-dom-to-image-more. As browsers have matured, many of the hacks we've accumulated over the
-years are not needed, or better ways have been found to handle some edge-cases. With the
-help of folks like @meche-gh, in #99 we removed the following members:
-
-- `.mimes` - was the not-very-comprehensive list of mime types used to handle inlining
-  things
-- `.parseExtension` - was a method to extract the extension from a filename, used to guess
-  mime types
-- `.mimeType` - was a method to map file extensions to mime types
-- `.dataAsUrl` - was a method to reassemble a `data:` URI from a Base64 representation and
-  mime type
-
-The 3.x release branch also fixed more node compatibility and `iframe` issues.
-
 ## What is it
 
 **dom-to-image-more** is a library which can turn arbitrary DOM node, including same
@@ -40,6 +22,69 @@ font and image support) added.
 
 Moved to [1904labs organization](https://github.com/1904labs/) from my repositories
 2019-02-06 as of version 2.7.3
+
+## 3.10 Breaking Changes
+
+The new [`requestInterceptor`](#requestinterceptor) hook unified the internal
+resource-fetching path. The only change that can affect existing code is at the `impl`
+surface (which is **not** public API — see the `impl` note under
+[Using Typescript](#using-typescript) — but is reachable):
+
+- `impl.util.getAndEncode(url)` now takes an optional second argument,
+  `getAndEncode(url, type)`, where `type` is a [`ResourceType`](#resource-types). The
+  first argument is unchanged, so existing one-argument calls still work.
+- [`imagePlaceholder`](#imageplaceholder) is now applied **only to image resources**
+  (`ResourceType.IMAGE` / `ResourceType.CSS_IMAGE`). A failed font or stylesheet — and a
+  direct `getAndEncode(url)` call made **without** a `type` — now drops on failure
+  (resolves to `''`) instead of substituting `imagePlaceholder`, so the CSS fallback (font
+  stack / cascade) applies. Pass `domtoimage.ResourceType.IMAGE` if you call
+  `getAndEncode` directly and want the placeholder.
+
+## What's New
+
+### 3.10
+
+- **[`requestInterceptor`](#requestinterceptor)** — a single hook to supply or recover any
+  external resource (images and fonts), consulted both before the fetch and on failure,
+  and the general primitive behind resource handling. Exposes
+  [`domtoimage.ResourceType`](#resource-types) for the resource kind. See the
+  [3.10 Breaking Changes](#310-breaking-changes) note for the related `impl.getAndEncode`
+  / `imagePlaceholder` adjustment.
+- **[`ignoreCSSRuleErrors`](#ignorecssruleerrors)** — suppress the `console.error` logged
+  when a cross-origin stylesheet's `cssRules` can't be read during font discovery (#241).
+
+### 3.9.2
+
+- **[`preserveScroll`](#preservescroll)** — reflect each scrollable element's current
+  `scrollLeft`/`scrollTop` instead of rendering everything scrolled to the top/left
+  (opt-in, #22).
+
+### 3.9.1
+
+- Render `::before`/`::after` `url()` backgrounds by inlining pseudo-element styles (#16).
+- Inline nested SVG `<image>` `href`/`xlink:href` so they survive in the output (#121).
+- Strip XML-illegal attribute names so malformed HTML still renders (#152).
+- Neutralize the captured root's margin to stop margin-cropping (#38).
+- Fail cleanly under SSR with a clear error instead of a raw `ReferenceError` (#83).
+
+### 3.9.0
+
+- **[`pixelRatio`](#pixelratio)** — device-pixel-ratio multiplier for crisp
+  high-DPI/Retina output.
+- **[`ensureShown`](#ensureshown)** — force a captured root that is hidden by its own
+  `display: none` / `opacity: 0` to render.
+- Inline CSS `mask`/`mask-image` `url()` so tinted SVG icons render.
+- Inline external SVG `<use>`/`<symbol>` references into the standalone output.
+- Fidelity fixes: wrap bare SVG roots in an `<svg>`, stop propagating a parent's `hidden`
+  to children, elide phantom gray borders, and keep table captions from clipping.
+- Documented the `backdrop-filter` limitation.
+
+### 3.8.0
+
+- **[`filterUrls`](#filterurls)** — filter which `url()` resources get downloaded and
+  inlined.
+- Ship a bundled TypeScript definition file.
+- Cross-realm / `<iframe>` type-check fixes.
 
 ## Installation
 
@@ -183,6 +228,22 @@ filterStyles(node, propertyName) {
 }
 ```
 
+#### filterUrls
+
+A function taking a discovered resource URL and its base URL as arguments, called for each
+`url(...)` reference found in CSS (backgrounds, masks, `@font-face` sources, etc.). Return
+`true` to fetch and inline the resource, or `false` to skip it (the original `url(...)` is
+left untouched). Lets you exclude specific resources from being downloaded. Defaults to
+undefined (all discovered URLs are processed).
+
+Sample use:
+
+```javascript
+filterUrls(url, baseUrl) {
+    return !url.includes('do-not-inline'); // skip URLs matching a pattern
+}
+```
+
 #### adjustClonedNode
 
 A function that will be invoked on each node as they are cloned. Useful to adjust nodes in
@@ -242,17 +303,22 @@ busting. Defaults to false
 
 #### imagePlaceholder
 
-A data URL for a placeholder image that will be used when fetching an image fails.
-Defaults to undefined and will throw an error on failed images
+A data URL for a placeholder image substituted when fetching an **image** resource
+(`ResourceType.IMAGE` / `ResourceType.CSS_IMAGE`) fails. It is **not** applied to fonts or
+stylesheets — those drop on failure so the CSS fallback (font stack / cascade) applies,
+rather than forcing an image in as a font. [`requestInterceptor`](#requestinterceptor)
+will fire first and thus takes precedence over it. Defaults to undefined.
 
 #### onImageError
 
-A callback invoked whenever a resource (image or font) cannot be fetched. It receives an
-object `{ url, message, status, willUsePlaceholder }` where `willUsePlaceholder` is `true`
-if `imagePlaceholder` will be substituted and `false` if the resource is dropped (resolved
-to an empty string). This is purely observational — rendering still degrades gracefully —
-and is useful for logging or telemetry of broken resources. A handler that throws is
-caught and logged so it can't break the render. Defaults to undefined.
+A callback invoked whenever an external resource (image, font, etc.) cannot be fetched. It
+receives an object `{ url, message, status, willUsePlaceholder }` where
+`willUsePlaceholder` is `true` if a substitute will be used (an `imagePlaceholder`, or a
+value supplied by [`requestInterceptor`](#requestinterceptor)'s failure call) and `false`
+if the resource is dropped (resolved to an empty string). This is purely observational —
+rendering still degrades gracefully — and is useful for logging or telemetry of broken
+resources. A handler that throws is caught and logged so it can't break the render.
+Defaults to undefined.
 
 Sample use:
 
@@ -344,6 +410,72 @@ optional `method` (`'GET'` or `'POST'`), optional `headers`, and optional `data`
 body, with `#{cors}` substituted in any string values). See
 [Alternative Solutions to CORS Policy Issue](#alternative-solutions-to-cors-policy-issue)
 below. Defaults to undefined.
+
+#### requestInterceptor
+
+A function hook to **supply** or **recover** any external resource (images, `@font-face`
+fonts, and stylesheets). It is the general primitive behind resource handling. It is
+called as `requestInterceptor(url, context)`, where `context` carries the resource `type`
+and a `status` that tells you which of two situations you're in:
+
+- **Before the fetch** — `context.status` is `undefined`. Return a `data:` URL string (or
+  a promise of one) to supply the resource yourself and skip the network request, or
+  return `undefined`/`null` to fall through to the normal fetch.
+- **After a failed fetch** — `context.status` is the HTTP status (`0` for a network
+  error/timeout). Return a value to use as the fallback — this **takes precedence over
+  `imagePlaceholder`** — or return `undefined`/`null` to fall back to `imagePlaceholder`
+  (for image types only) and then to dropping the resource. Note `imagePlaceholder` is
+  applied only for `IMAGE`/`CSS_IMAGE`; a failed `FONT` (or `STYLESHEET`) drops so the CSS
+  fallback applies, so `requestInterceptor` is the way to recover those.
+
+> **Test the phase as `status === undefined`, not `!status`** — a network error/timeout
+> reports `status: 0`, which is falsy.
+
+`context.type` is the kind of resource, one of the
+[`domtoimage.ResourceType`](#resource-types) constants (`IMAGE`, `CSS_IMAGE`, `FONT`,
+`STYLESHEET`), so you can return a different result per kind. A successful pre-fetch
+result is cached like a normal fetch, and a handler that throws is caught so it can't
+break the render. Useful for serving resources from an in-memory/app cache, supplying
+deterministic fixtures in tests, or implementing a custom resolver/fallback. Defaults to
+undefined.
+
+```javascript
+domtoimage.toPng(node, {
+    requestInterceptor: (url, { type, status }) => {
+        if (status === undefined && myCache.has(url)) {
+            return myCache.get(url); // before fetch: a data: URL (or a Promise of one)
+        }
+        if (status !== undefined) {
+            // the fetch failed — supply a kind-appropriate fallback
+            return type === domtoimage.ResourceType.FONT
+                ? myFontFallback
+                : myImageFallback;
+        }
+        return undefined; // fetch normally / fall back to imagePlaceholder
+    },
+});
+```
+
+It runs before `corsImg` rewriting and the normal XHR, so a pre-fetch value bypasses both.
+See
+[Resource handling: requestInterceptor vs corsImg vs imagePlaceholder](#resource-handling-requestinterceptor-vs-corsimg-vs-imageplaceholder)
+under _Things to watch out for_ for how these relate.
+
+#### Resource types
+
+`domtoimage.ResourceType` is a frozen object of the resource kinds passed to
+[`requestInterceptor`](#requestinterceptor) as `context.type`. Compare against these
+constants rather than hard-coding the string values:
+
+| Constant                             | Value          | Covers                                                                                       |
+| ------------------------------------ | -------------- | -------------------------------------------------------------------------------------------- |
+| `domtoimage.ResourceType.IMAGE`      | `'image'`      | `<img>` and SVG `<image>` content images                                                     |
+| `domtoimage.ResourceType.CSS_IMAGE`  | `'css-image'`  | any image from a CSS property (`background`, `mask`, `content`, `border-image`, `cursor`, …) |
+| `domtoimage.ResourceType.FONT`       | `'font'`       | `@font-face` `src` web fonts                                                                 |
+| `domtoimage.ResourceType.STYLESHEET` | `'stylesheet'` | external stylesheets                                                                         |
+
+(The values are plain strings — debuggable and serializable — so they're safe to log or
+compare directly; the constants just remove the magic-string footgun.)
 
 #### scale
 
@@ -583,9 +715,10 @@ domtoimage.toPng(node, options).then((dataUrl: string) => {
 
 The bundled types cover every rendering option documented above (including fork-specific
 ones such as `adjustClonedNode`, `filterStyles`, `styleCaching`, `corsImg`,
-`useCredentials`/`useCredentialsFilters`, `httpTimeout`, and `disableEmbedFonts`). The
-default import works with `esModuleInterop` enabled; otherwise use
-`import domtoimage = require('dom-to-image-more');`.
+`useCredentials`/`useCredentialsFilters`, `httpTimeout`, `disableEmbedFonts`,
+`ignoreCSSRuleErrors`, and `requestInterceptor`), and the `ResourceType` constants and
+type are exported alongside `Options`. The default import works with `esModuleInterop`
+enabled; otherwise use `import domtoimage = require('dom-to-image-more');`.
 
 The `impl` member is intentionally typed as `unknown`, since it is an internal surface
 that may change between releases and should not be depended on; cast it explicitly if you
@@ -684,6 +817,39 @@ need to reach into it for testing.
   `<foreignObject>` and has flaky image-decode timing, so captures may come out blank or
   vary run-to-run. It is not a supported target; if you need it, prefer [toSvg](#usage)
   and rasterize server-side. See the [Browsers](#browsers) note.
+
+### Resource handling: requestInterceptor vs corsImg vs imagePlaceholder
+
+These three options all touch external-resource fetching, and it's reasonable to ask why
+all three exist. They operate at different points and compose, rather than overlapping:
+
+- [`requestInterceptor`](#requestinterceptor) is the **general primitive**: a single
+  function that can _supply_ a resource before the fetch (when `status === undefined`) or
+  _recover_ one after any failed fetch (when `status` is numeric). Use it when you want
+  full programmatic control — a cache, a custom resolver, or a computed fallback.
+- [`corsImg`](#corsimg) is a **declarative convenience for one specific case**: routing
+  cross-origin images through a proxy. It still performs the real XHR (with the URL,
+  method, headers, and body you configure) rather than returning bytes, so it's not
+  expressible as a plain pre-fetch return. `requestInterceptor` runs first; if it returns
+  a value, `corsImg` is bypassed for that URL.
+- [`imagePlaceholder`](#imageplaceholder) is a **declarative convenience for the failure
+  case**: a single static `data:` URL substituted when an **image** fetch fails
+  (`IMAGE`/`CSS_IMAGE` only — a failed font/stylesheet drops so the CSS fallback applies).
+  It is the static-value shorthand for what `requestInterceptor`'s failure call does
+  programmatically, and the interceptor takes precedence when both are set.
+
+A fetch "fails" — and so triggers the recovery call / `imagePlaceholder` — not only on a
+network error, timeout, or non-2xx status, but also when a response comes back that isn't
+a usable image/font (an empty or non-`Blob` body, or one that can't be decoded). In that
+last case `status` is whatever the server returned (possibly a `2xx`), so treat **any**
+failure call (`status !== undefined`) as "the resource couldn't be produced," rather than
+inferring success from a `2xx`.
+
+In short: reach for `corsImg`/`imagePlaceholder` for the common proxy/placeholder cases,
+and `requestInterceptor` when you need a programmatic hook for either supplying or
+recovering resources. Effective order for any one URL is **`requestInterceptor`(pre-fetch)
+→ `corsImg` rewrite → fetch → `requestInterceptor`(failure) → `imagePlaceholder` (images
+only) → drop**, with [`onImageError`](#onimageerror) observing any failure along the way.
 
 ## Authors
 

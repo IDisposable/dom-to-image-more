@@ -114,20 +114,28 @@ Resolves a possibly relative `url` against `baseUrl` and returns the absolute UR
 Implemented by letting the browser normalize an `<a href>` inside a throwaway document
 that has a `<base>` set to `baseUrl`.
 
-### `getAndEncode(url)`
+### `getAndEncode(url, type)`
 
-`(url: string) => Promise<string>`
+`(url: string, type?: ResourceType) => Promise<string>`
 
-Fetches a resource and resolves to a **data URL** (base64). Key behaviors:
+Fetches a resource and resolves to a **data URL** (base64). `type` is the resource kind (a
+`domtoimage.ResourceType` value: `IMAGE`, `CSS_IMAGE`, `FONT`, `STYLESHEET`) used by
+`requestInterceptor` and to scope `imagePlaceholder`; it defaults to `undefined`. Key
+behaviors:
 
 - **Caches** by URL in `domtoimage.impl.urlCache`; concurrent/repeat requests for the same
   URL share one promise.
+- **`requestInterceptor`** is consulted first, before the fetch:
+  `requestInterceptor(url, { type, status: undefined })` may return a data URL (or a
+  promise of one) to short-circuit the network.
 - Honors options: `cacheBust`, `httpTimeout`, `useCredentials` / `useCredentialsFilters`,
-  `corsImg` (proxy URL/method/headers/data with the `#{cors}` token substituted), and
-  `imagePlaceholder`.
+  and `corsImg` (proxy URL/method/headers/data with the `#{cors}` token substituted).
 - Treats HTTP status `0` as success for `file://` URLs (Firefox local-file quirk).
-- On error/timeout/failure: resolves to `imagePlaceholder` if set, otherwise logs and
-  resolves to `''` (never rejects).
+- On any failure (network/timeout/non-2xx, **or** a response that isn't a usable
+  image/font): consults `requestInterceptor(url, { type, status })` for a recovery value
+  (takes precedence), then `imagePlaceholder` — **only for image types** (`IMAGE` /
+  `CSS_IMAGE`; a `FONT`/`STYLESHEET`, or an untyped call, drops) — then resolves to `''`.
+  Never rejects; every failure is surfaced via `onImageError`.
 
 ### `makeImage(uri)`
 
@@ -218,7 +226,7 @@ collides.
 | `height`                         | dimensions | `number`                                 |
 | `getWindow`                      | window     | `Window`                                 |
 | `resolveUrl`                     | url        | `string`                                 |
-| `getAndEncode`                   | url        | `Promise<string>`                        |
+| `getAndEncode`                   | url, type? | `Promise<string>`                        |
 | `makeImage`                      | url        | `Promise<HTMLImageElement \| undefined>` |
 | `canvasToBlob`                   | url        | `Promise<Blob>`                          |
 | `escape`                         | string     | `string`                                 |

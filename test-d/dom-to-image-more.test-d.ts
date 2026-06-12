@@ -6,9 +6,13 @@
 // error, or tsc fails (reporting an "unused" expect-error) — so this file fails
 // loudly if the bundled .d.ts ever drifts.
 
-import domtoimage, { Options, ImageErrorInfo } from '../dom-to-image-more';
+import domtoimage, { Options, ImageErrorInfo, ResourceType } from '../dom-to-image-more';
 
 declare const node: HTMLElement;
+
+// --- the exposed ResourceType constants ---
+const fontKind: ResourceType = domtoimage.ResourceType.FONT;
+void fontKind;
 
 // --- return types of every render method ---
 domtoimage.toSvg(node).then((u: string) => u);
@@ -43,6 +47,15 @@ const opts: Options = {
     adjustClonedNode: (_n: Node, clone: Node, _after: boolean) => clone,
     onclone: (_clone: Node) => undefined,
     corsImg: { url: 'p', method: 'POST', headers: { a: 'b' } },
+    requestInterceptor: (
+        url: string,
+        context: { type: ResourceType; status: number | undefined }
+    ) =>
+        context.status === undefined &&
+        context.type === domtoimage.ResourceType.IMAGE &&
+        url.startsWith('cached:')
+            ? 'data:,'
+            : undefined,
     onImageError: (info: ImageErrorInfo) => {
         const u: string = info.url;
         const s: number = info.status;
