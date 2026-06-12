@@ -45,11 +45,14 @@ surface (which is **not** public API — see the `impl` note under
 ### 3.10
 
 - **[`requestInterceptor`](#requestinterceptor)** — a single hook to supply or recover any
-  external resource (images and fonts), consulted both before the fetch and on failure,
-  and the general primitive behind resource handling. Exposes
+  external resource (images, fonts, and stylesheets), consulted both before the fetch and
+  on failure, and the general primitive behind resource handling. Exposes
   [`domtoimage.ResourceType`](#resource-types) for the resource kind. See the
   [3.10 Breaking Changes](#310-breaking-changes) note for the related `impl.getAndEncode`
   / `imagePlaceholder` adjustment.
+- **[`loadExternalStyleSheet`](#loadexternalstylesheet)** — opt in to fetching and
+  re-parsing cross-origin stylesheets so their `@font-face` web fonts can be discovered
+  and embedded (#243).
 - **[`ignoreCSSRuleErrors`](#ignorecssruleerrors)** — suppress the `console.error` logged
   when a cross-origin stylesheet's `cssRules` can't be read during font discovery (#241).
 
@@ -416,6 +419,30 @@ cross-origin (CDN) stylesheets, which throw a `SecurityError` on `cssRules` acce
 failure is benign — it's already handled gracefully and the capture still succeeds — so
 this option just quiets the repeated console noise on font-heavy pages. Defaults to false
 (errors are logged).
+
+#### loadExternalStyleSheet
+
+By default a cross-origin stylesheet (e.g. a CDN font stylesheet) exposes no readable
+`cssRules`, so its `@font-face` web fonts can't be discovered and are left unembedded. Set
+`loadExternalStyleSheet: true` to **fetch and re-parse** such a stylesheet so its fonts
+can be embedded. You can also pass a predicate `(href) => boolean` to scope which sheets
+are fetched:
+
+```javascript
+domtoimage.toPng(node, {
+    loadExternalStyleSheet: (href) => href.includes('fonts.example.com'),
+});
+```
+
+It is opt-in (default `false`) because it adds a network fetch per matched stylesheet. The
+fetch flows through [`requestInterceptor`](#requestinterceptor) (with
+`type === ResourceType.STYLESHEET`), [`corsImg`](#corsimg), credentials, and the URL
+cache, so a CORS-blocked stylesheet can be supplied or proxied the same way images and
+fonts are — and `requestInterceptor` is in fact consulted for **every** external
+stylesheet, so you can supply one from a cache even with this option off. It degrades
+quietly: if the fetch is CORS-blocked or fails and nothing supplies it, that sheet is
+simply skipped (the prior behavior). Relative `url()`s in the fetched CSS are resolved
+against the stylesheet's own URL.
 
 #### httpTimeout
 
@@ -900,7 +927,8 @@ fixes), Ludovic Bouges @ludovic (style property filter), Roland Ma @RolandMa1986
 regex)", Kasim Tan @kasimtan, Matthias Zach @matthiaszach (iframe fixes), Kamran Ayub
 @kamranayub (filter URL option), Liu YuanYuan @mgenware, Davey Tran @DaveyTran, Nathan
 Fiscus @NathanFiscus (requestInterceptor), TechValidate @TechValidate (pseudo-element
-filter)
+filter), Sizle @SizlePtyLtd, kbasten @kbasten, and Michal Bryxí @MichalBryxi (external
+stylesheet loading)
 
 ## License
 

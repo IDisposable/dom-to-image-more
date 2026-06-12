@@ -118,24 +118,43 @@ that has a `<base>` set to `baseUrl`.
 
 `(url: string, type?: ResourceType) => Promise<string>`
 
-Fetches a resource and resolves to a **data URL** (base64). `type` is the resource kind (a
+Thin wrapper over the shared fetch core (see below) that resolves to a **data URL**
+(base64) — used at the inline sites (images, fonts). `type` is the resource kind (a
 `domtoimage.ResourceType` value: `IMAGE`, `CSS_IMAGE`, `FONT`, `STYLESHEET`) used by
-`requestInterceptor` and to scope `imagePlaceholder`; it defaults to `undefined`. Key
-behaviors:
+`requestInterceptor` and to scope `imagePlaceholder`; it defaults to `undefined`. Resolves
+to `''` when the resource is dropped.
+
+### `getResourceText(url, type, allowNetwork)`
+
+`(url: string, type?: ResourceType, allowNetwork?: boolean) => Promise<string | null>`
+
+Sibling wrapper that resolves to the resource's **text** (via `readAsText`, no base64
+round-trip) — used to load external stylesheets
+([loadExternalStyleSheet](../README.md#loadexternalstylesheet)). `allowNetwork === false`
+consults `requestInterceptor` but performs **no** network fetch (so a readable or
+not-opted-in stylesheet can still be supplied by the interceptor without being
+downloaded). Resolves to `null` when there's no resource.
+
+#### Shared fetch core
+
+Both wrappers share one fetch core that returns a Blob (network), a data URL string
+(supplied by `requestInterceptor`/`imagePlaceholder`), or `null` (dropped); the wrappers
+handle the encode/decode, so a resource is only base64-encoded where it's actually
+inlined. Key behaviors:
 
 - **Caches** by URL in `domtoimage.impl.urlCache`; concurrent/repeat requests for the same
-  URL share one promise.
+  URL share one promise. Reset with [`resetUrlCache()`](IMPL.md#implurlcache).
 - **`requestInterceptor`** is consulted first, before the fetch:
   `requestInterceptor(url, { type, status: undefined })` may return a data URL (or a
   promise of one) to short-circuit the network.
 - Honors options: `cacheBust`, `httpTimeout`, `useCredentials` / `useCredentialsFilters`,
   and `corsImg` (proxy URL/method/headers/data with the `#{cors}` token substituted).
 - Treats HTTP status `0` as success for `file://` URLs (Firefox local-file quirk).
-- On any failure (network/timeout/non-2xx, **or** a response that isn't a usable
-  image/font): consults `requestInterceptor(url, { type, status })` for a recovery value
-  (takes precedence), then `imagePlaceholder` — **only for image types** (`IMAGE` /
-  `CSS_IMAGE`; a `FONT`/`STYLESHEET`, or an untyped call, drops) — then resolves to `''`.
-  Never rejects; every failure is surfaced via `onImageError`.
+- On any failure (network/timeout/non-2xx, **or** a response that isn't a usable Blob):
+  consults `requestInterceptor(url, { type, status })` for a recovery value (takes
+  precedence), then `imagePlaceholder` — **only for image types** (`IMAGE` / `CSS_IMAGE`;
+  a `FONT`/`STYLESHEET`, or an untyped call, drops) — then drops. Never rejects; every
+  failure is surfaced via `onImageError`.
 
 ### `makeImage(uri)`
 
@@ -199,37 +218,38 @@ collides.
 
 ## Quick index
 
-| Name                             | Category   | Returns                                  |
-| -------------------------------- | ---------- | ---------------------------------------- |
-| `isElement`                      | type guard | `boolean`                                |
-| `isElementHostForOpenShadowRoot` | type guard | `boolean`                                |
-| `isShadowRoot`                   | type guard | `boolean`                                |
-| `isInShadowRoot`                 | type guard | `boolean`                                |
-| `isHTMLElement`                  | type guard | `boolean`                                |
-| `isHTMLCanvasElement`            | type guard | `boolean`                                |
-| `isHTMLInputElement`             | type guard | `boolean`                                |
-| `isHTMLImageElement`             | type guard | `boolean`                                |
-| `isHTMLLinkElement`              | type guard | `boolean`                                |
-| `isHTMLScriptElement`            | type guard | `boolean`                                |
-| `isHTMLStyleElement`             | type guard | `boolean`                                |
-| `isHTMLTextAreaElement`          | type guard | `boolean`                                |
-| `isShadowSlotElement`            | type guard | `boolean`                                |
-| `isSVGElement`                   | type guard | `boolean`                                |
-| `isSVGImageElement`              | type guard | `boolean`                                |
-| `isSVGSVGElement`                | type guard | `boolean`                                |
-| `isSVGRectElement`               | type guard | `boolean`                                |
-| `isSVGUseElement`                | type guard | `boolean`                                |
-| `isInstanceOf`                   | type guard | `boolean`                                |
-| `isDataUrl`                      | type guard | `boolean`                                |
-| `isDimensionMissing`             | dimensions | `boolean`                                |
-| `width`                          | dimensions | `number`                                 |
-| `height`                         | dimensions | `number`                                 |
-| `getWindow`                      | window     | `Window`                                 |
-| `resolveUrl`                     | url        | `string`                                 |
-| `getAndEncode`                   | url, type? | `Promise<string>`                        |
-| `makeImage`                      | url        | `Promise<HTMLImageElement \| undefined>` |
-| `canvasToBlob`                   | url        | `Promise<Blob>`                          |
-| `escape`                         | string     | `string`                                 |
-| `escapeXhtml`                    | string     | `string`                                 |
-| `asArray`                        | misc       | `Array`                                  |
-| `uid`                            | misc       | `string`                                 |
+| Name                             | Category                  | Returns                                  |
+| -------------------------------- | ------------------------- | ---------------------------------------- |
+| `isElement`                      | type guard                | `boolean`                                |
+| `isElementHostForOpenShadowRoot` | type guard                | `boolean`                                |
+| `isShadowRoot`                   | type guard                | `boolean`                                |
+| `isInShadowRoot`                 | type guard                | `boolean`                                |
+| `isHTMLElement`                  | type guard                | `boolean`                                |
+| `isHTMLCanvasElement`            | type guard                | `boolean`                                |
+| `isHTMLInputElement`             | type guard                | `boolean`                                |
+| `isHTMLImageElement`             | type guard                | `boolean`                                |
+| `isHTMLLinkElement`              | type guard                | `boolean`                                |
+| `isHTMLScriptElement`            | type guard                | `boolean`                                |
+| `isHTMLStyleElement`             | type guard                | `boolean`                                |
+| `isHTMLTextAreaElement`          | type guard                | `boolean`                                |
+| `isShadowSlotElement`            | type guard                | `boolean`                                |
+| `isSVGElement`                   | type guard                | `boolean`                                |
+| `isSVGImageElement`              | type guard                | `boolean`                                |
+| `isSVGSVGElement`                | type guard                | `boolean`                                |
+| `isSVGRectElement`               | type guard                | `boolean`                                |
+| `isSVGUseElement`                | type guard                | `boolean`                                |
+| `isInstanceOf`                   | type guard                | `boolean`                                |
+| `isDataUrl`                      | type guard                | `boolean`                                |
+| `isDimensionMissing`             | dimensions                | `boolean`                                |
+| `width`                          | dimensions                | `number`                                 |
+| `height`                         | dimensions                | `number`                                 |
+| `getWindow`                      | window                    | `Window`                                 |
+| `resolveUrl`                     | url                       | `string`                                 |
+| `getAndEncode`                   | url, type?                | `Promise<string>`                        |
+| `getResourceText`                | url, type?, allowNetwork? | `Promise<string \| null>`                |
+| `makeImage`                      | url                       | `Promise<HTMLImageElement \| undefined>` |
+| `canvasToBlob`                   | url                       | `Promise<Blob>`                          |
+| `escape`                         | string                    | `string`                                 |
+| `escapeXhtml`                    | string                    | `string`                                 |
+| `asArray`                        | misc                      | `Array`                                  |
+| `uid`                            | misc                      | `string`                                 |

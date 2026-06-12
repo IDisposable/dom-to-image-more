@@ -67,6 +67,12 @@
         // network error/timeout) where a returned value is the fallback, taking
         // precedence over imagePlaceholder. undefined/null falls through.
         requestInterceptor: undefined,
+        // Opt-in: fetch and re-parse a cross-origin stylesheet whose cssRules can't be
+        // read directly, so its @font-face web fonts can be discovered and embedded.
+        // false (default) keeps the current behavior of skipping unreadable sheets.
+        // true fetches every unreadable cross-origin sheet; a function (href) => bool
+        // scopes which ones. Adds a network fetch per matched sheet, degrades quietly.
+        loadExternalStyleSheet: false,
     };
 
     // Resource kinds passed to requestInterceptor as context.type. Exposed as
@@ -98,8 +104,16 @@
             urlCache: [],
             options: {},
             copyOptions: copyOptions,
+            resetUrlCache: resetUrlCache,
         },
     };
+
+    // Clear the per-render resource cache. Called at the start/end of a render so
+    // each capture fetches fresh; exposed for tests/advanced callers that drive the
+    // impl helpers directly.
+    function resetUrlCache() {
+        domtoimage.impl.urlCache = [];
+    }
 
     if (typeof exports === 'object' && typeof module === 'object') {
         module.exports = domtoimage; // eslint-disable-line no-undef
@@ -256,7 +270,7 @@
         // document, or leave the per-render url cache populated.
         function cleanup() {
             restoreWrappers();
-            domtoimage.impl.urlCache = [];
+            resetUrlCache();
             svgRefsToInline = [];
             removeSandbox();
         }
@@ -1202,6 +1216,7 @@
             canvasToBlob: canvasToBlob,
             resolveUrl: resolveUrl,
             getAndEncode: getAndEncode,
+            getResourceText: getResourceText,
             uid: uid,
             asArray: asArray,
             escapeXhtml: escapeXhtml,
@@ -1487,7 +1502,90 @@
             });
         }
 
+        // Wrapper for inline sites (images, fonts): fetch and base64-encode to a data
+        // URL. Returns '' when the resource is dropped.
         function getAndEncode(url, type) {
+            return getResource(url, type, true).then(resourceToDataUrl);
+        }
+
+        // Wrapper for stylesheets: fetch and read as text (no base64 round-trip).
+        // `allowNetwork` gates whether an actual network fetch happens (see getResource
+        // / loadExternalStyleSheet). Returns null when there's no resource.
+        function getResourceText(url, type, allowNetwork) {
+            return getResource(url, type, allowNetwork).then(resourceToText);
+        }
+
+        // A fetched resource is a Blob (from the network), a data URL string (supplied
+        // by requestInterceptor or imagePlaceholder), or null (dropped). The wrappers
+        // turn that into a data URL (for inlining) or text (for stylesheets), so we only
+        // base64-encode when we're actually going to inline.
+        function resourceToDataUrl(resource) {
+            if (resource === null || resource === undefined || resource === '') {
+                return '';
+            }
+            return typeof resource === 'string' ? resource : blobToDataUrl(resource);
+        }
+
+        function resourceToText(resource) {
+            if (resource === null || resource === undefined || resource === '') {
+                return null;
+            }
+            return typeof resource === 'string'
+                ? dataUrlToText(resource)
+                : blobToText(resource);
+        }
+
+        function blobToDataUrl(blob) {
+            return readBlob(blob, 'readAsDataURL', '');
+        }
+
+        function blobToText(blob) {
+            return readBlob(blob, 'readAsText', null);
+        }
+
+        function readBlob(blob, method, onError) {
+            return new Promise(function (resolve) {
+                const reader = new FileReader();
+                reader.onloadend = function () {
+                    resolve(reader.result);
+                };
+                reader.onerror = function () {
+                    resolve(onError);
+                };
+                try {
+                    reader[method](blob);
+                } catch (_e) {
+                    resolve(onError);
+                }
+            });
+        }
+
+        // Decode a data URL (base64 or percent-encoded) back to text, preserving UTF-8.
+        // Used when a stylesheet is supplied as a data URL by requestInterceptor.
+        function dataUrlToText(dataUrl) {
+            const commaIndex = dataUrl.indexOf(',');
+            if (commaIndex === -1) {
+                return '';
+            }
+            const meta = dataUrl.slice(0, commaIndex);
+            const data = dataUrl.slice(commaIndex + 1);
+            if (!/;base64/i.test(meta)) {
+                return decodeURIComponent(data);
+            }
+            const binary = atob(data);
+            let percent = '';
+            for (let i = 0; i < binary.length; i += 1) {
+                percent += '%' + ('00' + binary.charCodeAt(i).toString(16)).slice(-2);
+            }
+            return decodeURIComponent(percent);
+        }
+
+        // The shared fetch core for getAndEncode and getResourceText. Consults
+        // requestInterceptor (before phase), then — if `allowNetwork` — performs the XHR
+        // (honoring corsImg, credentials, httpTimeout) and the recover() failure path.
+        // Resolves to a Blob, a data URL string, or null; the wrappers handle encoding.
+        // urlCache dedupes by URL.
+        function getResource(url, type, allowNetwork) {
             let cacheEntry = domtoimage.impl.urlCache.find(function (el) {
                 return el.url === url;
             });
@@ -1536,6 +1634,14 @@
                     return cacheEntry.promise;
                 }
 
+                // No caller-supplied resource. When the network isn't permitted (a
+                // readable or not-opted-in stylesheet under loadExternalStyleSheet —
+                // see expandExternalStyleSheets), there's nothing more to fetch.
+                if (allowNetwork === false) {
+                    cacheEntry.promise = Promise.resolve(null);
+                    return cacheEntry.promise;
+                }
+
                 if (domtoimage.impl.options.cacheBust) {
                     // Cache bypass so we don't have CORS issues with cached images
                     // Source: https://developer.mozilla.org/en/docs/Web/API/XMLHttpRequest/Using_XMLHttpRequest#Bypassing_the_cache
@@ -1557,11 +1663,11 @@
                                 (status >= 200 && status <= 300 && xhr.response !== null)
                             ) {
                                 const response = xhr.response;
-                                // A 2xx (or file://) response can still be unusable —
-                                // an empty/non-Blob body, or one that can't be decoded.
-                                // Treat that as a failure too, routing it through the
-                                // same recovery path (interceptor → imagePlaceholder →
-                                // drop) rather than dropping it outright.
+                                // A 2xx (or file://) response can still be unusable — an
+                                // empty/non-Blob body. Route that through the same
+                                // recovery path rather than returning it. The Blob is
+                                // resolved as-is; the wrapper reads it as a data URL or
+                                // text.
                                 if (!(response instanceof Blob)) {
                                     recover(
                                         'Response was not a Blob (got ' +
@@ -1571,21 +1677,7 @@
                                     );
                                     return;
                                 }
-                                const reader = new FileReader();
-                                reader.onloadend = function () {
-                                    const result = reader.result;
-                                    resolve(result);
-                                };
-                                try {
-                                    reader.readAsDataURL(response);
-                                } catch (ex) {
-                                    recover(
-                                        'Failed to read the response as a Data URL (' +
-                                            ex.toString() +
-                                            ') while fetching resource: ' +
-                                            url
-                                    );
-                                }
+                                resolve(response);
                             } else {
                                 placehold();
                             }
@@ -1595,7 +1687,7 @@
                     function fail(message) {
                         console.error(message);
                         reportImageError(message, false);
-                        resolve('');
+                        resolve(null);
                     }
 
                     function placehold() {
@@ -1899,11 +1991,108 @@
 
         function readAll() {
             return Promise.resolve(util.asArray(document.styleSheets))
+                .then(expandExternalStyleSheets)
                 .then(getCssRules)
                 .then(selectWebFontRules)
                 .then(function (rules) {
                     return rules.map(newWebFont);
                 });
+
+            // loadExternalStyleSheet: a cross-origin stylesheet exposes no readable
+            // cssRules, so its @font-face rules are invisible. requestInterceptor gets
+            // first dibs on every external (href'd) stylesheet; for an unreadable sheet
+            // the option opts in, we also fetch its text (via getResourceText, so it
+            // flows through the interceptor, corsImg, credentials, and urlCache),
+            // rewrite its relative url()s to absolute, and re-parse it in a throwaway
+            // document so its rules become readable. Readable sheets keep their CSSOM
+            // rules; anything we can't load is left as-is (skipped downstream).
+            function expandExternalStyleSheets(styleSheets) {
+                const hasInterceptor =
+                    typeof domtoimage.impl.options.requestInterceptor === 'function';
+                const seen = {};
+                return Promise.all(
+                    styleSheets.map(function (sheet) {
+                        const href = sheet.href;
+                        // Inline <style> (readable), or a duplicate href we already
+                        // handled — don't fetch/re-parse the same sheet twice.
+                        if (!href || seen[href]) {
+                            return sheet;
+                        }
+                        seen[href] = true;
+                        // Network only for an unreadable sheet the option opts into; the
+                        // interceptor is still consulted for every external sheet.
+                        const allowNetwork =
+                            isStyleSheetUnreadable(sheet) && isOptedIn(href);
+                        if (!hasInterceptor && !allowNetwork) {
+                            // Nothing to supply or fetch — keep the sheet (its CSSOM
+                            // rules are read directly, or it stays skipped).
+                            return sheet;
+                        }
+                        return util
+                            .getResourceText(href, RESOURCE_TYPE.STYLESHEET, allowNetwork)
+                            .then(function (cssText) {
+                                if (!cssText) {
+                                    return sheet;
+                                }
+                                return reparseStyleSheet(cssText, href) || sheet;
+                            });
+                    })
+                );
+            }
+
+            function isOptedIn(href) {
+                const option = domtoimage.impl.options.loadExternalStyleSheet;
+                if (typeof option === 'function') {
+                    try {
+                        return option(href) === true;
+                    } catch (e) {
+                        console.error(
+                            'domtoimage: loadExternalStyleSheet predicate threw: ' +
+                                e.toString()
+                        );
+                        return false;
+                    }
+                }
+                return option === true;
+            }
+
+            function isStyleSheetUnreadable(sheet) {
+                try {
+                    // Accessing cssRules throws a SecurityError for a cross-origin sheet.
+                    return !sheet.cssRules;
+                } catch (_e) {
+                    return true;
+                }
+            }
+
+            function reparseStyleSheet(cssText, href) {
+                try {
+                    const doc = document.implementation.createHTMLDocument('');
+                    const styleElement = doc.createElement('style');
+                    styleElement.appendChild(
+                        document.createTextNode(absolutizeUrls(cssText, href))
+                    );
+                    doc.body.appendChild(styleElement);
+                    return styleElement.sheet;
+                } catch (_e) {
+                    return null;
+                }
+            }
+
+            // Resolve each relative url() against the stylesheet's own href, since the
+            // re-parsed sheet has no href of its own to resolve them against later.
+            function absolutizeUrls(cssText, href) {
+                return cssText.replace(
+                    /url\((['"]?)([^'")]+)\1\)/g,
+                    function (match, quote, rawUrl) {
+                        const url = rawUrl.trim();
+                        if (util.isDataUrl(url) || /^[a-z][a-z0-9+.-]*:/i.test(url)) {
+                            return match;
+                        }
+                        return `url(${quote}${util.resolveUrl(url, href)}${quote})`;
+                    }
+                );
+            }
 
             function selectWebFontRules(cssRules) {
                 return cssRules
