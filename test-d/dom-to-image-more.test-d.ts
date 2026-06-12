@@ -42,6 +42,7 @@ const opts: Options = {
     useCredentialsFilters: [/foo/, 'bar'],
     httpTimeout: 5000,
     loadExternalStyleSheet: (href: string) => href.includes('fonts'),
+    logger: { warn: (...a: any[]) => void a, error: (...a: any[]) => void a },
     imagePlaceholder: 'data:,',
     filter: (n: Node) => n.nodeType === 1,
     filterStyles: (n: Node, p: string) => !p.startsWith('--'),

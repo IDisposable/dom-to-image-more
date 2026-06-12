@@ -28,6 +28,16 @@ declare namespace domToImage {
         willUsePlaceholder: boolean;
     }
 
+    /**
+     * A console-like sink for the library's own diagnostics (see `Options.logger`).
+     * Methods are optional: a missing one drops that level, so `{}` silences and
+     * `{ error: fn }` keeps only errors.
+     */
+    interface Logger {
+        warn?(...args: any[]): void;
+        error?(...args: any[]): void;
+    }
+
     interface CorsImgOptions {
         /** Proxy endpoint; `#{cors}` is replaced by the target URL. */
         url?: string;
@@ -194,6 +204,14 @@ declare namespace domToImage {
          * sheet and degrades quietly if the fetch is itself CORS-blocked or fails.
          */
         loadExternalStyleSheet?: boolean | ((href: string) => boolean);
+        /**
+         * A console-like sink (`{ warn?, error? }`) the library's own diagnostics are
+         * routed through. Defaults to a logger that delegates to the global `console`.
+         * Provide a partial logger to redirect or silence output: a missing method
+         * drops that level, so `{}` silences everything and `{ error: fn }` keeps
+         * only errors.
+         */
+        logger?: Logger;
         /** Configuration for routing cross-origin images through a proxy. */
         corsImg?: CorsImgOptions;
         /**

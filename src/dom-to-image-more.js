@@ -10,6 +10,18 @@
         left: '-9999px',
         visibility: 'hidden',
     };
+    // Default logger: delegates to the global console at call time (so a stubbed
+    // console is still observed). It's the default value of the `logger` option, so the
+    // library always routes diagnostics through `options.logger`; a caller can replace
+    // it to redirect or silence output.
+    const defaultLogger = {
+        warn: function (...args) {
+            console.warn(...args);
+        },
+        error: function (...args) {
+            console.error(...args);
+        },
+    };
     // Default impl options
     const defaultOptions = {
         // Default is to copy default styles of elements
@@ -73,6 +85,11 @@
         // true fetches every unreadable cross-origin sheet; a function (href) => bool
         // scopes which ones. Adds a network fetch per matched sheet, degrades quietly.
         loadExternalStyleSheet: false,
+        // Console-like sink ({ warn?, error? }) the library's own diagnostics are routed
+        // through. Defaults to a logger that delegates to the global console. Provide
+        // your own (or a partial one) to redirect or silence: a missing method drops
+        // that level, so {} silences everything and { error: fn } keeps only errors.
+        logger: defaultLogger,
     };
 
     // Resource kinds passed to requestInterceptor as context.type. Exposed as
@@ -134,6 +151,28 @@
             (typeof window !== 'undefined' ? window[name] : undefined) ||
             globalThis[name]
         );
+    }
+
+    // Route the library's diagnostics through the configured `logger` (a console-like
+    // object; defaults to one that delegates to the global console). A caller can
+    // redirect output to their own sink or silence it: a method missing on a supplied
+    // logger is dropped, so `logger: {}` silences everything and `logger: { error: fn }`
+    // keeps only errors.
+    function logWarn(...args) {
+        emitLog('warn', args);
+    }
+
+    function logError(...args) {
+        emitLog('error', args);
+    }
+
+    function emitLog(level, args) {
+        // Fall back to defaultLogger for the brief window before copyOptions runs.
+        const logger = domtoimage.impl.options.logger || defaultLogger;
+        const method = logger[level];
+        if (typeof method === 'function') {
+            method.apply(logger, args);
+        }
     }
 
     /**
@@ -232,7 +271,7 @@
             return Promise.race([ready, timeout]).then(function (timedOut) {
                 ownerWindow.clearTimeout(timer);
                 if (timedOut) {
-                    console.warn(
+                    logWarn(
                         'dom-to-image-more: timed out after ' +
                             cap +
                             'ms waiting for document fonts to finish loading ' +
@@ -331,7 +370,7 @@
                     // The DOM may have been mutated mid-render; restore
                     // best-effort and never let cleanup throw (it would mask the
                     // real success value or error).
-                    console.error('domtoimage: failed to restore wrapped node', e);
+                    logError('domtoimage: failed to restore wrapped node', e);
                 }
             }
         }
@@ -690,7 +729,7 @@
             return scale;
         }
 
-        console.warn(
+        logWarn(
             'dom-to-image-more: the requested ' +
                 Math.round(width * scale) +
                 '×' +
@@ -1619,7 +1658,7 @@
                     try {
                         return interceptor(url, { type: type, status: status });
                     } catch (e) {
-                        console.error('requestInterceptor threw: ' + e.toString());
+                        logError('requestInterceptor threw:', e);
                         return undefined;
                     }
                 };
@@ -1684,8 +1723,7 @@
                         }
                     };
 
-                    function fail(message) {
-                        console.error(message);
+                    function failImage(message) {
                         reportImageError(message, false);
                         resolve(null);
                     }
@@ -1712,7 +1750,8 @@
                                     resolve(value);
                                 },
                                 function () {
-                                    fail(message);
+                                    logError(message);
+                                    failImage(message);
                                 }
                             );
                             return;
@@ -1732,7 +1771,8 @@
                             reportImageError(message, true);
                             resolve(placeholder);
                         } else {
-                            fail(message);
+                            logError(message);
+                            failImage(message);
                         }
                     }
 
@@ -1750,7 +1790,7 @@
                             });
                         } catch (e) {
                             // Never let an observer break the render.
-                            console.error('onImageError handler threw: ' + e.toString());
+                            logError('onImageError handler threw:', e);
                         }
                     }
 
@@ -1758,7 +1798,8 @@
                         try {
                             return JSON.parse(JSON.stringify(data));
                         } catch (e) {
-                            fail('corsImg.data is missing or invalid:' + e.toString());
+                            logError('corsImg.data is missing or invalid', e);
+                            failImage('corsImg.data is missing or invalid');
                         }
                     }
 
@@ -2046,9 +2087,9 @@
                     try {
                         return option(href) === true;
                     } catch (e) {
-                        console.error(
-                            'domtoimage: loadExternalStyleSheet predicate threw: ' +
-                                e.toString()
+                        logError(
+                            'domtoimage: loadExternalStyleSheet predicate threw:',
+                            e
                         );
                         return false;
                     }
@@ -2116,10 +2157,10 @@
                             );
                         } catch (e) {
                             if (!domtoimage.impl.options.ignoreCSSRuleErrors) {
-                                console.error(
+                                logError(
                                     'domtoimage: Error while reading CSS rules from: ' +
                                         sheet.href,
-                                    e.toString()
+                                    e
                                 );
                             }
                         }
