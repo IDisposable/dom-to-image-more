@@ -83,7 +83,7 @@ declare namespace domToImage {
          * `true` once the children have already been cloned. The return value
          * is ignored.
          */
-        adjustClonedNode?: (node: Node, clone: Node, after: boolean) => Node | void;
+        adjustClonedNode?: (node: Node, clone: Node, after: boolean) => void;
         /**
          * Invoked when an external resource (image, font, etc.) cannot be fetched.
          * Purely observational — the render still degrades gracefully (placeholder

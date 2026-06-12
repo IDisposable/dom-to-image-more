@@ -55,6 +55,8 @@ const opts: Options = {
         if (style.getPropertyValue('content').includes('—')) return { content: '"-"' };
         return undefined;
     },
+    // A node-returning callback still type-checks (TS's void-return rule), but the
+    // return is ignored by the impl — see the void-return lock below (issue #252).
     adjustClonedNode: (_n: Node, clone: Node, _after: boolean) => clone,
     onclone: (_clone: Node) => undefined,
     corsImg: { url: 'p', method: 'POST', headers: { a: 'b' } },
@@ -76,6 +78,12 @@ const opts: Options = {
     },
 };
 domtoimage.toPng(node, opts).then((u: string) => u);
+
+// adjustClonedNode's return is `void` — the impl ignores it (issue #252), so the call
+// result cannot be consumed as a replacement Node. This positive assertion locks that in:
+// if the type ever drifts back to `Node | void`, `void` no longer accepts it and tsc fails.
+const adjustedReturn: void = opts.adjustClonedNode!(node, node, false);
+void adjustedReturn;
 
 // --- negative cases: each must be a type error ---
 // @ts-expect-error unknown option is rejected

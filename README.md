@@ -292,6 +292,10 @@ any way needed before the conversion. Note that this be invoked before the onclo
 callback. The handler gets the original node, the cloned node, and a boolean that says if
 we've cloned the children already (so you can handle either before or after)
 
+This is a **mutation** hook: adjust the `clone` in place. Any value you return is
+**ignored** — to swap a node for a different one, use [onclone](#onclone) (which can
+replace nodes wholesale).
+
 Sample use:
 
 ```javascript
@@ -299,7 +303,6 @@ const adjustClone = (node, clone, after) => {
     if (!after && clone.id === 'element') {
         clone.style.transform = 'translateY(100px)';
     }
-    return clone;
 };
 ```
 
