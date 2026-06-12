@@ -18,6 +18,9 @@ module.exports = function (grunt) {
             options: {
                 banner: '/*! <%= pkg.name %> v<%= pkg.version %> <%= grunt.template.today("UTC:yyyy-mm-dd HH:MM:ss Z") %> */\n',
                 sourceMap: true,
+                compress: {
+                    passes: 3,
+                },
             },
             dist: {
                 files: {

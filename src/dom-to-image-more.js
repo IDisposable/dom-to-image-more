@@ -10,6 +10,9 @@
         left: '-9999px',
         visibility: 'hidden',
     };
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const XLINK_NS = 'http://www.w3.org/1999/xlink';
+    const SVG_DATA_URI_PREFIX = 'data:image/svg+xml;charset=utf-8,';
     // Default logger: delegates to the global console at call time (so a stubbed
     // console is still observed). It's the default value of the `logger` option, so the
     // library always routes diagnostics through `options.logger`; a caller can replace
@@ -322,16 +325,15 @@
             if (svgRefsToInline.length === 0) {
                 return clone;
             }
-            const NS = 'http://www.w3.org/2000/svg';
-            const holder = document.createElementNS(NS, 'svg');
-            holder.setAttribute('xmlns', NS);
+            const holder = document.createElementNS(SVG_NS, 'svg');
+            holder.setAttribute('xmlns', SVG_NS);
             holder.setAttribute('width', '0');
             holder.setAttribute('height', '0');
             holder.style.setProperty('position', 'absolute');
             holder.style.setProperty('width', '0');
             holder.style.setProperty('height', '0');
             holder.style.setProperty('overflow', 'hidden');
-            const defs = document.createElementNS(NS, 'defs');
+            const defs = document.createElementNS(SVG_NS, 'defs');
             holder.appendChild(defs);
 
             const existingIds = new Set();
@@ -443,10 +445,10 @@
                     const svgSizing =
                         (util.isDimensionMissing(width) ? '' : ` width="${width}"`) +
                         (util.isDimensionMissing(height) ? '' : ` height="${height}"`);
-                    return `<svg xmlns="http://www.w3.org/2000/svg"${svgSizing}><foreignObject${foreignObjectSizing}>${xhtml}</foreignObject></svg>`;
+                    return `<svg xmlns="${SVG_NS}"${svgSizing}><foreignObject${foreignObjectSizing}>${xhtml}</foreignObject></svg>`;
                 })
                 .then(function (svg) {
-                    return `data:image/svg+xml;charset=utf-8,${svg}`;
+                    return `${SVG_DATA_URI_PREFIX}${svg}`;
                 });
         }
 
@@ -460,7 +462,6 @@
         // so a hidden `<g>`/`<path>` root is revealed before measuring (otherwise getBBox
         // throws on a `display:none` element and the capture comes out blank).
         function makeNonRootSvgDataUri(clone) {
-            const SVG_NS = 'http://www.w3.org/2000/svg';
             const finalizeEnsureShown = revealRootIfHidden(clone);
             let box;
             try {
@@ -492,7 +493,7 @@
                     return `<svg xmlns="${SVG_NS}"${sizing} viewBox="${viewBox}">${inner}</svg>`;
                 })
                 .then(function (svg) {
-                    return `data:image/svg+xml;charset=utf-8,${svg}`;
+                    return `${SVG_DATA_URI_PREFIX}${svg}`;
                 });
         }
 
@@ -1152,7 +1153,7 @@
 
             function fixSvg() {
                 if (util.isSVGElement(clone)) {
-                    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+                    clone.setAttribute('xmlns', SVG_NS);
 
                     if (util.isSVGRectElement(clone)) {
                         ['width', 'height'].forEach(function (attribute) {
@@ -1209,7 +1210,7 @@
             function collectUseReference(originalUse) {
                 const href =
                     originalUse.getAttribute('href') ||
-                    originalUse.getAttributeNS('http://www.w3.org/1999/xlink', 'href') ||
+                    originalUse.getAttributeNS(XLINK_NS, 'href') ||
                     originalUse.getAttribute('xlink:href');
                 if (!href || href.charAt(0) !== '#') {
                     return;
@@ -1223,7 +1224,7 @@
                     return;
                 }
                 const referencedClone = referenced.cloneNode(true);
-                referencedClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+                referencedClone.setAttribute('xmlns', SVG_NS);
                 svgRefsToInline.push({ id: id, node: referencedClone });
             }
         }
@@ -1469,7 +1470,7 @@
 
             return new Promise(function (resolve, reject) {
                 // Create an SVG element to house the image
-                const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                const svg = document.createElementNS(SVG_NS, 'svg');
 
                 // and create the Image element to insert into that wrapper
                 const image = new Image();
@@ -2234,7 +2235,6 @@
         // a failed fetch is surfaced via onImageError (inside getAndEncode) and the
         // node is left as-is rather than sinking the whole render.
         function inlineSvgImage(node, get) {
-            const XLINK_NS = 'http://www.w3.org/1999/xlink';
             const href =
                 node.getAttribute('href') ||
                 node.getAttributeNS(XLINK_NS, 'href') ||
