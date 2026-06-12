@@ -55,6 +55,8 @@ surface (which is **not** public API — see the `impl` note under
   and embedded (#243).
 - **[`ignoreCSSRuleErrors`](#ignorecssruleerrors)** — suppress the `console.error` logged
   when a cross-origin stylesheet's `cssRules` can't be read during font discovery (#241).
+- **[`logger`](#logger)** — route the library's `console.warn`/`console.error` diagnostics
+  through a console-like sink to redirect or silence them (#250).
 
 ### 3.9.2
 
@@ -419,6 +421,28 @@ cross-origin (CDN) stylesheets, which throw a `SecurityError` on `cssRules` acce
 failure is benign — it's already handled gracefully and the capture still succeeds — so
 this option just quiets the repeated console noise on font-heavy pages. Defaults to false
 (errors are logged).
+
+#### logger
+
+A console-like sink (`{ warn?, error? }`) that the library's own diagnostics — failed
+resource fetches, unreadable cross-origin stylesheets, a throwing `requestInterceptor` /
+`onImageError` handler, the canvas-size clamp warning, etc. — are routed through. Defaults
+to a logger that delegates to the global `console`. Provide your own to **redirect** that
+output to a custom sink or **silence** it. Methods are optional and a missing one drops
+that level, so `{}` silences everything and `{ error: fn }` keeps only errors:
+
+```javascript
+// send the library's noise to your telemetry instead of the console
+domtoimage.toPng(node, { logger: { warn: track.warn, error: track.error } });
+
+// silence it entirely
+domtoimage.toPng(node, { logger: {} });
+```
+
+This is the broad "shhh / capture everything" knob; the per-message flags (e.g.
+[ignoreCSSRuleErrors](#ignorecssruleerrors)) still control _whether_ a given message is
+emitted at all, while `logger` controls _where_ emitted output goes.
+[onImageError](#onimageerror) remains the structured, observable failure event.
 
 #### loadExternalStyleSheet
 

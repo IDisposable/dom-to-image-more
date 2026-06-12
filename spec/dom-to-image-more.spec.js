@@ -3204,11 +3204,18 @@
                     const sheet = new ThrowingSheet();
                     sheet.href = 'https://accounts.google.com/gsi/style';
 
-                    const originalError = console.error;
+                    // Route the library's diagnostics through a logger and count them
                     let errorCount = 0;
-                    console.error = function () {
-                        errorCount += 1;
-                    };
+                    const opts = Object.assign(
+                        {
+                            logger: {
+                                error: function () {
+                                    errorCount += 1;
+                                },
+                            },
+                        },
+                        options
+                    );
 
                     Object.defineProperty(document, 'styleSheets', {
                         configurable: true,
@@ -3217,15 +3224,10 @@
                         },
                     });
 
-                    domtoimage.impl.copyOptions(options);
+                    domtoimage.impl.copyOptions(opts);
 
-                    // getCssRules accesses cssRules (and so logs) in a later
-                    // microtask, not synchronously, so restore only once readAll has
-                    // fully settled — a synchronous finally would put console.error
-                    // back before the throwing access happens.
                     function restore() {
                         delete document.styleSheets; // restore native accessor
-                        console.error = originalError;
                         domtoimage.impl.copyOptions({});
                     }
 
@@ -3254,6 +3256,85 @@
                     readAllWithThrowingSheet({ ignoreCSSRuleErrors: true })
                         .then(function (errorCount) {
                             assert.equal(errorCount, 0);
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
+                // Trigger the cssRules-read diagnostic with the given logger while
+                // spying on the global console.error, to prove the library routes
+                // through `options.logger` and doesn't fall back to console (#250).
+                function readAllSpyingConsole(loggerOption) {
+                    function ThrowingSheet() {}
+                    Object.defineProperty(ThrowingSheet.prototype, 'cssRules', {
+                        get: function () {
+                            throw new DOMException('blocked', 'SecurityError');
+                        },
+                    });
+                    const sheet = new ThrowingSheet();
+                    sheet.href = 'https://accounts.google.com/gsi/style';
+                    Object.defineProperty(document, 'styleSheets', {
+                        configurable: true,
+                        get: function () {
+                            return [sheet];
+                        },
+                    });
+                    const originalConsoleError = console.error;
+                    let consoleErrorCalls = 0;
+                    console.error = function () {
+                        consoleErrorCalls += 1;
+                    };
+                    domtoimage.impl.copyOptions({ logger: loggerOption });
+
+                    function restore() {
+                        delete document.styleSheets;
+                        console.error = originalConsoleError;
+                        domtoimage.impl.copyOptions({});
+                    }
+
+                    return fontFaces.impl.readAll().then(
+                        function () {
+                            restore();
+                            return consoleErrorCalls;
+                        },
+                        function (e) {
+                            restore();
+                            throw e;
+                        }
+                    );
+                }
+
+                it('logger redirects diagnostics; the global console is not used as a fallback — issue #250', function (done) {
+                    const seen = [];
+                    readAllSpyingConsole({
+                        error: function (message) {
+                            seen.push(message);
+                        },
+                    })
+                        .then(function (consoleErrorCalls) {
+                            assert.isAbove(
+                                seen.length,
+                                0,
+                                'the custom logger.error must receive the diagnostic'
+                            );
+                            assert.equal(
+                                consoleErrorCalls,
+                                0,
+                                'the global console.error must not be used'
+                            );
+                        })
+                        .then(done)
+                        .catch(done);
+                });
+
+                it('logger: {} silences diagnostics — issue #250', function (done) {
+                    readAllSpyingConsole({})
+                        .then(function (consoleErrorCalls) {
+                            assert.equal(
+                                consoleErrorCalls,
+                                0,
+                                'an empty logger silences the diagnostic'
+                            );
                         })
                         .then(done)
                         .catch(done);
