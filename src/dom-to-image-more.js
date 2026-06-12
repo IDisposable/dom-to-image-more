@@ -55,12 +55,28 @@
         // stylesheet's cssRules cannot be read during font discovery. The failure is
         // benign and already handled gracefully; this just quiets the noise.
         ignoreCSSRuleErrors: false,
-        // Optional hook to intercept any external-resource fetch. Called with the
-        // URL; if it returns a defined value (a data URL string, or a promise of
-        // one) that value is used and the network request is skipped. Return
-        // undefined to fall through to the normal fetch.
+        // Optional hook to supply or recover any external resource. Called as
+        // requestInterceptor(url, { type, status }) where `type` is one of the
+        // RESOURCE_TYPE values (exposed as domtoimage.ResourceType). status ===
+        // undefined is the pre-fetch call (a returned data URL string / promise
+        // short-circuits the network); a numeric status is a failed fetch (0 =
+        // network error/timeout) where a returned value is the fallback, taking
+        // precedence over imagePlaceholder. undefined/null falls through.
         requestInterceptor: undefined,
     };
+
+    // Resource kinds passed to requestInterceptor as context.type. Exposed as
+    // domtoimage.ResourceType so callers can compare against named constants rather
+    // than magic strings. Values are plain strings (debuggable/serializable, unlike
+    // Symbols, which would also break === across realms/bundles).
+    const RESOURCE_TYPE = Object.freeze({
+        IMAGE: 'image', // <img> and SVG <image> content images
+        // any image referenced via a CSS property: background, mask, content,
+        // border-image, list-style-image, cursor, …
+        CSS_IMAGE: 'css-image',
+        FONT: 'font', // @font-face src
+        STYLESHEET: 'stylesheet', // external stylesheets
+    });
 
     const domtoimage = {
         toSvg: toSvg,
@@ -69,6 +85,7 @@
         toBlob: toBlob,
         toPixelData: toPixelData,
         toCanvas: toCanvas,
+        ResourceType: RESOURCE_TYPE,
         impl: {
             fontFaces: fontFaces,
             images: images,
@@ -1007,13 +1024,15 @@
                     // visits — so without this the external URL can't be fetched in
                     // the standalone output and the pseudo's background drops out
                     // (issue #16).
-                    return inliner.inlineAll(cssText).then(function (inlinedCssText) {
-                        const styleElement = document.createElement('style');
-                        styleElement.appendChild(
-                            document.createTextNode(`${selector}{${inlinedCssText}}`)
-                        );
-                        clone.appendChild(styleElement);
-                    });
+                    return inliner
+                        .inlineAll(cssText, undefined, RESOURCE_TYPE.CSS_IMAGE)
+                        .then(function (inlinedCssText) {
+                            const styleElement = document.createElement('style');
+                            styleElement.appendChild(
+                                document.createTextNode(`${selector}{${inlinedCssText}}`)
+                            );
+                            clone.appendChild(styleElement);
+                        });
 
                     function formatCssProperties() {
                         const styleText = util
@@ -1432,7 +1451,7 @@
             });
         }
 
-        function getAndEncode(url) {
+        function getAndEncode(url, type) {
             let cacheEntry = domtoimage.impl.urlCache.find(function (el) {
                 return el.url === url;
             });
@@ -1446,17 +1465,39 @@
             }
 
             if (cacheEntry.promise === null) {
-                // Let callers supply the resource themselves (cache, fixtures,
-                // custom resolver) for any URL, short-circuiting the network. A
-                // defined return is cached like a normal fetch; undefined falls
-                // through. The value may be a data URL string or a promise of one.
-                const interceptor = domtoimage.impl.options.requestInterceptor;
-                if (typeof interceptor === 'function') {
-                    const intercepted = interceptor(url);
-                    if (typeof intercepted !== 'undefined') {
-                        cacheEntry.promise = Promise.resolve(intercepted);
-                        return cacheEntry.promise;
+                // requestInterceptor is the single hook for a caller to supply or
+                // recover a resource for any URL (images and fonts). It is called as
+                // requestInterceptor(url, { type, status }) where `type` is the
+                // resource kind (a RESOURCE_TYPE value) and `status` signals the phase:
+                //   status === undefined — before the fetch; a returned value
+                //              short-circuits the network (and is cached like a fetch).
+                //   status is a number  — the fetch failed with that HTTP status (0
+                //              for a network error/timeout); a returned value is the
+                //              fallback, taking precedence over imagePlaceholder.
+                // Returning undefined/null falls through. The value may be a data URL
+                // string or a promise of one. A throw is caught so it can't break the
+                // render.
+                const callInterceptor = function (status) {
+                    const interceptor = domtoimage.impl.options.requestInterceptor;
+                    if (typeof interceptor !== 'function') {
+                        return undefined;
                     }
+                    try {
+                        return interceptor(url, { type: type, status: status });
+                    } catch (e) {
+                        console.error('requestInterceptor threw: ' + e.toString());
+                        return undefined;
+                    }
+                };
+
+                const interceptionProvided = function (value) {
+                    return typeof value !== 'undefined' && value !== null;
+                };
+
+                const preempt = callInterceptor(undefined);
+                if (interceptionProvided(preempt)) {
+                    cacheEntry.promise = Promise.resolve(preempt);
+                    return cacheEntry.promise;
                 }
 
                 if (domtoimage.impl.options.cacheBust) {
@@ -1480,11 +1521,19 @@
                                 (status >= 200 && status <= 300 && xhr.response !== null)
                             ) {
                                 const response = xhr.response;
+                                // A 2xx (or file://) response can still be unusable —
+                                // an empty/non-Blob body, or one that can't be decoded.
+                                // Treat that as a failure too, routing it through the
+                                // same recovery path (interceptor → imagePlaceholder →
+                                // drop) rather than dropping it outright.
                                 if (!(response instanceof Blob)) {
-                                    fail(
-                                        'Expected response to be a Blob, but got: ' +
-                                            typeof response
+                                    recover(
+                                        'Response was not a Blob (got ' +
+                                            typeof response +
+                                            ') while fetching resource: ' +
+                                            url
                                     );
+                                    return;
                                 }
                                 const reader = new FileReader();
                                 reader.onloadend = function () {
@@ -1494,9 +1543,11 @@
                                 try {
                                     reader.readAsDataURL(response);
                                 } catch (ex) {
-                                    fail(
-                                        'Failed to read the response as Data URL: ' +
-                                            ex.toString()
+                                    recover(
+                                        'Failed to read the response as a Data URL (' +
+                                            ex.toString() +
+                                            ') while fetching resource: ' +
+                                            url
                                     );
                                 }
                             } else {
@@ -1512,26 +1563,48 @@
                     }
 
                     function placehold() {
-                        const placeholder = domtoimage.impl.options.imagePlaceholder;
+                        recover(
+                            'Status:' + xhr.status + ' while fetching resource: ' + url
+                        );
+                    }
 
-                        if (placeholder) {
-                            // A placeholder masks the failure visually, but still
-                            // surface it so callers can observe the broken resource.
-                            reportImageError(
-                                'Status:' +
-                                    xhr.status +
-                                    ' while fetching resource: ' +
-                                    url,
-                                true
+                    // Unified failure path for every way a fetch can fail to yield a
+                    // usable resource — network error, timeout, non-2xx status, or a
+                    // response whose body isn't a usable image/font. First offers
+                    // requestInterceptor a chance to recover (numeric status; 0 = no
+                    // HTTP response), which takes precedence over imagePlaceholder, then
+                    // falls back to imagePlaceholder (image resources only), then drops
+                    // the resource. Every outcome is still surfaced via onImageError.
+                    function recover(message) {
+                        const recovered = callInterceptor(xhr.status);
+                        if (interceptionProvided(recovered)) {
+                            Promise.resolve(recovered).then(
+                                function (value) {
+                                    reportImageError(message, true);
+                                    resolve(value);
+                                },
+                                function () {
+                                    fail(message);
+                                }
                             );
+                            return;
+                        }
+
+                        // imagePlaceholder is image-specific, so only substitute it for
+                        // image resources. A failed font/stylesheet drops instead, so
+                        // the CSS fallback (font stack / cascade) applies rather than an
+                        // image being forced in as a font.
+                        const imageLike =
+                            type === RESOURCE_TYPE.IMAGE ||
+                            type === RESOURCE_TYPE.CSS_IMAGE;
+                        const placeholder = imageLike
+                            ? domtoimage.impl.options.imagePlaceholder
+                            : undefined;
+                        if (placeholder) {
+                            reportImageError(message, true);
                             resolve(placeholder);
                         } else {
-                            fail(
-                                'Status:' +
-                                    xhr.status +
-                                    ' while fetching resource: ' +
-                                    url
-                            );
+                            fail(message);
                         }
                     }
 
@@ -1723,19 +1796,21 @@
             return new RegExp(`url\\((["']?)(${util.escape(urlValue)})\\1\\)`, 'gm');
         }
 
-        function inline(string, url, baseUrl, get) {
+        function inline(string, url, baseUrl, type, get) {
             return Promise.resolve(url)
                 .then(function (urlValue) {
                     return baseUrl ? util.resolveUrl(urlValue, baseUrl) : urlValue;
                 })
-                .then(get || util.getAndEncode)
+                .then(function (resolvedUrl) {
+                    return (get || util.getAndEncode)(resolvedUrl, type);
+                })
                 .then(function (dataUrl) {
                     const pattern = urlAsRegex(url);
                     return string.replace(pattern, `url($1${dataUrl}$1)`);
                 });
         }
 
-        function inlineAll(string, baseUrl, get) {
+        function inlineAll(string, baseUrl, type, get) {
             if (nothingToInline()) {
                 return Promise.resolve(string);
             }
@@ -1752,7 +1827,7 @@
                     let done = Promise.resolve(string);
                     urls.forEach(function (url) {
                         done = done.then(function (prefix) {
-                            return inline(prefix, url, baseUrl, get);
+                            return inline(prefix, url, baseUrl, type, get);
                         });
                     });
                     return done;
@@ -1833,7 +1908,11 @@
                     resolve: function resolve() {
                         // NOSONAR
                         const baseUrl = (webFontRule.parentStyleSheet || {}).href;
-                        return inliner.inlineAll(webFontRule.cssText, baseUrl);
+                        return inliner.inlineAll(
+                            webFontRule.cssText,
+                            baseUrl,
+                            RESOURCE_TYPE.FONT
+                        );
                     },
                     src: function () {
                         return webFontRule.style.getPropertyValue('src');
@@ -1862,7 +1941,9 @@
                 }
 
                 return Promise.resolve(element.src)
-                    .then(get || util.getAndEncode)
+                    .then(function (src) {
+                        return (get || util.getAndEncode)(src, RESOURCE_TYPE.IMAGE);
+                    })
                     .then(function (dataUrl) {
                         return new Promise(function (resolve) {
                             // Error-handling contract (intentional, see makeImage):
@@ -1896,7 +1977,9 @@
                 return Promise.resolve(node);
             }
             return Promise.resolve(href)
-                .then(get || util.getAndEncode)
+                .then(function (hrefValue) {
+                    return (get || util.getAndEncode)(hrefValue, RESOURCE_TYPE.IMAGE);
+                })
                 .then(function (dataUrl) {
                     if (dataUrl) {
                         node.setAttributeNS(XLINK_NS, 'xlink:href', dataUrl);
@@ -1954,9 +2037,11 @@
                         return Promise.resolve();
                     }
 
-                    return inliner.inlineAll(value).then(function (inlinedValue) {
-                        node.style.setProperty(propertyName, inlinedValue, priority);
-                    });
+                    return inliner
+                        .inlineAll(value, undefined, RESOURCE_TYPE.CSS_IMAGE)
+                        .then(function (inlinedValue) {
+                            node.style.setProperty(propertyName, inlinedValue, priority);
+                        });
                 });
 
                 return Promise.all(inliningTasks).then(function () {

@@ -21,8 +21,9 @@ declare namespace domToImage {
         /** HTTP status of the failed request (0 for network errors/timeouts). */
         status: number;
         /**
-         * `true` if a placeholder image will be substituted, `false` if the
-         * resource is dropped (resolved to an empty string).
+         * `true` if a substitute will be used — an `imagePlaceholder`, or a value
+         * supplied by `requestInterceptor`'s failure call — `false` if the resource
+         * is dropped (resolved to an empty string).
          */
         willUsePlaceholder: boolean;
     }
@@ -59,9 +60,9 @@ declare namespace domToImage {
          */
         adjustClonedNode?: (node: Node, clone: Node, after: boolean) => Node | void;
         /**
-         * Invoked when a resource (image/font) cannot be fetched. Purely
-         * observational — the render still degrades gracefully (placeholder or
-         * empty string); use it for logging/telemetry of broken resources.
+         * Invoked when an external resource (image, font, etc.) cannot be fetched.
+         * Purely observational — the render still degrades gracefully (placeholder
+         * or empty string); use it for logging/telemetry of broken resources.
          */
         onImageError?: (info: ImageErrorInfo) => void;
         /**
@@ -112,8 +113,11 @@ declare namespace domToImage {
          */
         ignoreCSSRuleErrors?: boolean;
         /**
-         * Data URL of a placeholder image used when fetching an image fails.
-         * When unset, failed images reject. Defaults to undefined.
+         * Data URL of a placeholder image substituted when fetching an **image**
+         * resource fails (`ResourceType.IMAGE` / `ResourceType.CSS_IMAGE`). It is
+         * not applied to fonts or stylesheets — those drop on failure so the CSS
+         * fallback (font stack / cascade) applies. `requestInterceptor` fires
+         * first. Defaults to `undefined`.
          */
         imagePlaceholder?: string;
         /**
@@ -169,13 +173,47 @@ declare namespace domToImage {
         /** Configuration for routing cross-origin images through a proxy. */
         corsImg?: CorsImgOptions;
         /**
-         * Intercept any external-resource fetch (images and fonts). Called with
-         * the resource URL; return a data URL string (or a promise of one) to use
-         * it and skip the network request, or `undefined` to fall through to the
-         * normal fetch. Useful for serving resources from a cache, supplying test
-         * fixtures, or implementing a custom resolver.
+         * Supply or recover any external resource (images, fonts, and stylesheets).
+         * Useful for serving resources from a cache, supplying test fixtures, or
+         * implementing a custom resolver/fallback.
+         * Called with the resource URL and a context describing the resource `type` (see
+         * {@link ResourceType}) and a `status` that signals the phase:
+         * - `status` is `undefined` — **before** the fetch: return a data URL string
+         *   (or a promise of one) to short-circuit the network, or `undefined`/`null`
+         *   to fetch normally.
+         * - `status` is a number — the fetch **failed**: return a value to use as the
+         *   fallback (taking precedence over `imagePlaceholder`), or `undefined`/`null`
+         *   to fall back to `imagePlaceholder`/dropping the resource. `status` is the
+         *   HTTP status, or `0` for a network error/timeout. A failure call also fires
+         *   when a response comes back that isn't a usable image/font (empty/non-`Blob`
+         *   or undecodable body), in which case `status` may even be a `2xx` — so treat
+         *   any failure call as "couldn't produce the resource".
+         *
+         * Note: a network error/timeout reports `status: 0`, which is falsy — test
+         * the pre-fetch phase as `status === undefined`, not `!status`.
          */
-        requestInterceptor?: (url: string) => string | Promise<string> | undefined;
+        requestInterceptor?: (
+            url: string,
+            context: { type: ResourceType; status: number | undefined }
+        ) => string | Promise<string> | undefined | null;
+    }
+
+    /** The kind of external resource being fetched, passed to `requestInterceptor`. */
+    type ResourceType = 'image' | 'css-image' | 'font' | 'stylesheet';
+
+    /** Named constants for {@link ResourceType}, exposed as `domtoimage.ResourceType`. */
+    interface ResourceTypes {
+        /** `<img>` and SVG `<image>` content images. */
+        readonly IMAGE: 'image';
+        /**
+         * Any image referenced via a CSS property — `background`, `mask`,
+         * `content`, `border-image`, `list-style-image`, `cursor`, etc.
+         */
+        readonly CSS_IMAGE: 'css-image';
+        /** `@font-face` `src` web fonts. */
+        readonly FONT: 'font';
+        /** External stylesheets. */
+        readonly STYLESHEET: 'stylesheet';
     }
 
     interface DomToImage {
@@ -195,8 +233,13 @@ declare namespace domToImage {
          */
         toPixelData(node: Node, options?: Options): Promise<Uint8ClampedArray>;
         /**
-         * Internal implementation surface, exposed only for unit testing and
-         * advanced integration. Not part of the stable public API and may
+         * Named resource-kind constants for the `type` passed to
+         * `requestInterceptor` (e.g. `domtoimage.ResourceType.FONT`).
+         */
+        ResourceType: ResourceTypes;
+        /**
+         * Internal implementation surface, exposed only for advanced
+         * integration unit testing. Not part of the stable public API and may
          * change between releases. See docs/IMPL.md and docs/UTILS.md.
          */
         impl: unknown;
