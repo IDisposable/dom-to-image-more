@@ -1,5 +1,5 @@
 // Type definitions for dom-to-image-more
-// Project: https://github.com/1904labs/dom-to-image-more
+// Project: https://github.com/IDisposable/dom-to-image-more
 
 export = domToImage;
 export as namespace domtoimage;

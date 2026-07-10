@@ -2,8 +2,8 @@
 
 [![Version](https://img.shields.io/npm/v/dom-to-image-more.svg?style=flat-square)](https://npmjs.com/package/dom-to-image-more)
 [![Bundle Size](https://img.shields.io/bundlephobia/minzip/dom-to-image-more?style=flat-square)](https://bundlephobia.com/result?p=dom-to-image-more)
-[![Open Issues](https://img.shields.io/github/issues/1904labs/dom-to-image-more?style=flat-square)](https://github.com/1904labs/dom-to-image-more/issues)
-[![GitHub Repo stars](https://img.shields.io/github/stars/1904labs/dom-to-image-more?style=social)](https://github.com/1904labs/dom-to-image-more)
+[![Open Issues](https://img.shields.io/github/issues/IDisposable/dom-to-image-more?style=flat-square)](https://github.com/IDisposable/dom-to-image-more/issues)
+[![GitHub Repo stars](https://img.shields.io/github/stars/IDisposable/dom-to-image-more?style=social)](https://github.com/IDisposable/dom-to-image-more)
 [![Twitter](https://img.shields.io/twitter/follow/idisposable.svg?style=social&label=Follow)](https://www.twitter.com/idisposable)
 
 ## What is it
@@ -23,6 +23,9 @@ font and image support) added.
 Moved to [1904labs organization](https://github.com/1904labs/) from my repositories
 2019-02-06 as of version 2.7.3
 
+Moved back from 1904labs organization to
+[my repositories](https://github.com/IDisposable/) 2026-07-10 as of version 3.10.1
+
 ## 3.10 Breaking Changes
 
 The new [`requestInterceptor`](#requestinterceptor) hook unified the internal
@@ -41,6 +44,11 @@ surface (which is **not** public API — see the `impl` note under
   `getAndEncode` directly and want the placeholder.
 
 ## What's New
+
+### 3.10.1
+
+Moved back from 1904labs organization to
+[my repositories](https://github.com/IDisposable/)
 
 ### 3.10.0
 

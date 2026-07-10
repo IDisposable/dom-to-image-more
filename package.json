@@ -1,6 +1,6 @@
 {
     "name": "dom-to-image-more",
-    "version": "3.10.0",
+    "version": "3.10.1",
     "description": "Generates an image from a DOM node using HTML5 canvas and SVG",
     "main": "dist/dom-to-image-more.min.js",
     "types": "dom-to-image-more.d.ts",
@@ -8,8 +8,8 @@
         "@eslint/eslintrc": "^3.3.5",
         "@eslint/js": "^10.0.1",
         "chai": "^4.5.0",
-        "eslint": "^10.4.1",
-        "globals": "^17.6.0",
+        "eslint": "^10.6.0",
+        "globals": "^17.7.0",
         "grunt": "^1.6.2",
         "grunt-cli": "^1.5.0",
         "grunt-contrib-jshint": "^3.2.0",
@@ -24,8 +24,8 @@
         "karma-mocha": "^2.0.1",
         "karma-mocha-reporter": "^2.2.5",
         "mocha": "^11.7.6",
-        "prettier": "^3.8.4",
-        "semver": "^7.8.4",
+        "prettier": "^3.9.5",
+        "semver": "^7.8.5",
         "typescript": "^6.0.3"
     },
     "scripts": {
@@ -46,7 +46,7 @@
         "final-release": "npm version $(semver $npm_package_version -i)",
         "postversion": "npm run test && git push && git push --tags"
     },
-    "repository": "github:1904labs/dom-to-image-more",
+    "repository": "github:IDisposable/dom-to-image-more",
     "keywords": [
         "dom",
         "image",
@@ -97,7 +97,7 @@
     ],
     "license": "MIT",
     "bugs": {
-        "url": "https://github.com/1904labs/dom-to-image-more/issues"
+        "url": "https://github.com/IDisposable/dom-to-image-more/issues"
     },
-    "homepage": "https://github.com/1904labs/dom-to-image-more#readme"
+    "homepage": "https://github.com/IDisposable/dom-to-image-more#readme"
 }
