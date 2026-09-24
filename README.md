@@ -44,6 +44,9 @@ surface (which is **not** public API — see the `impl` note under
   `getAndEncode` directly and want the placeholder.
 
 ## What's New
+### 3.10.4
+
+- Fix hang when an image that has a lazy load is not visible.
 
 ### 3.10.1
 
@@ -987,7 +990,7 @@ regex)", Kasim Tan @kasimtan, Matthias Zach @matthiaszach (iframe fixes), Kamran
 @kamranayub (filter URL option), Liu YuanYuan @mgenware, Davey Tran @DaveyTran, Nathan
 Fiscus @NathanFiscus (requestInterceptor), TechValidate @TechValidate (pseudo-element
 filter), Sizle @SizlePtyLtd, kbasten @kbasten, and Michal Bryxí @MichalBryxi (external
-stylesheet loading)
+stylesheet loading), Holly @h0lly (lazy image hang)
 
 ## License
 

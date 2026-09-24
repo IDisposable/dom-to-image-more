@@ -928,6 +928,13 @@
             // decode first makes the dimensions real and resolves currentSrc for
             // srcset/sizes images, so the capture is deterministic regardless of when
             // the source happened to load.
+            //
+            // A lazy image that generates no box never starts that fetch. decode()
+            // then stays pending, and the capture hangs (issue #255). Chrome does
+            // this when the image, or an ancestor, is display:none. The image's own
+            // computed display stays inline when only the ancestor is hidden, so
+            // check the chain, including a shadow host. An eager image still loads
+            // while hidden, so that wait stays.
             function decodeSourceImage() {
                 if (
                     !util.isHTMLImageElement(original) ||
@@ -940,10 +947,42 @@
                     return undefined;
                 }
 
+                if (lazyImageIsNotRendered(original)) {
+                    return undefined;
+                }
+
                 return original.decode().catch(function () {
                     // Broken or blocked image: nothing to wait for, proceed with
                     // whatever dimensions/source we can read below.
                 });
+            }
+
+            // True when a loading="lazy" image will not start its fetch. Walk
+            // ancestors because display:none on a parent suppresses the box
+            // without changing the image's own computed display.
+            function lazyImageIsNotRendered(img) {
+                if (img.loading !== 'lazy') {
+                    return false;
+                }
+
+                let current = img;
+                while (current && current.nodeType === 1) {
+                    if (
+                        getComputedStyle(current).getPropertyValue('display') === 'none'
+                    ) {
+                        return true;
+                    }
+                    if (current.parentElement) {
+                        current = current.parentElement;
+                        continue;
+                    }
+                    const root =
+                        typeof current.getRootNode === 'function'
+                            ? current.getRootNode()
+                            : null;
+                    current = root && root.host ? root.host : null;
+                }
+                return false;
             }
 
             function fixResponsiveImages() {

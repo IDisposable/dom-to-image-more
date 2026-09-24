@@ -817,6 +817,170 @@
                             .then(done)
                             .catch(done);
                     });
+
+                    // issue #255: HTMLImageElement.decode() stays pending when a
+                    // loading="lazy" image generates no box. The capture must
+                    // finish, and a visible or eager image must still be decoded.
+                    function trackDecode(img) {
+                        const state = { called: false };
+                        img.decode = function () {
+                            state.called = true;
+                            return Promise.resolve();
+                        };
+                        return state;
+                    }
+
+                    function captureWithoutFetch(node) {
+                        return domtoimage.toSvg(node, {
+                            disableInlineImages: true,
+                            disableEmbedFonts: true,
+                        });
+                    }
+
+                    it('skips decode() for a lazy image with display:none (#255)', function (done) {
+                        const root = document.createElement('div');
+                        const img = document.createElement('img');
+                        img.loading = 'lazy';
+                        img.alt = 'hidden-lazy';
+                        img.style.display = 'none';
+                        img.src = 'http://127.0.0.1:9/hidden-lazy.png';
+                        const decode = trackDecode(img);
+                        root.appendChild(img);
+                        document.body.appendChild(root);
+
+                        captureWithoutFetch(root)
+                            .then(function () {
+                                assert.isFalse(
+                                    decode.called,
+                                    'decode() must not run for a lazy image with display:none'
+                                );
+                            })
+                            .then(function () {
+                                root.remove();
+                                done();
+                            })
+                            .catch(function (err) {
+                                root.remove();
+                                done(err);
+                            });
+                    });
+
+                    it('skips decode() for a lazy image under a display:none ancestor (#255)', function (done) {
+                        const root = document.createElement('div');
+                        root.style.display = 'none';
+                        const img = document.createElement('img');
+                        img.loading = 'lazy';
+                        img.alt = 'parent-hidden-lazy';
+                        img.src = 'http://127.0.0.1:9/parent-hidden-lazy.png';
+                        const decode = trackDecode(img);
+                        root.appendChild(img);
+                        document.body.appendChild(root);
+
+                        captureWithoutFetch(root)
+                            .then(function () {
+                                assert.equal(
+                                    getComputedStyle(img).display,
+                                    'inline',
+                                    'the image display stays inline under a hidden parent'
+                                );
+                                assert.isFalse(
+                                    decode.called,
+                                    'decode() must not run when an ancestor is display:none'
+                                );
+                            })
+                            .then(function () {
+                                root.remove();
+                                done();
+                            })
+                            .catch(function (err) {
+                                root.remove();
+                                done(err);
+                            });
+                    });
+
+                    it('skips decode() for a lazy image in a display:none shadow host (#255)', function (done) {
+                        const host = document.createElement('div');
+                        host.style.display = 'none';
+                        const shadow = host.attachShadow({ mode: 'open' });
+                        const img = document.createElement('img');
+                        img.loading = 'lazy';
+                        img.alt = 'shadow-hidden-lazy';
+                        img.src = 'http://127.0.0.1:9/shadow-hidden-lazy.png';
+                        const decode = trackDecode(img);
+                        shadow.appendChild(img);
+                        document.body.appendChild(host);
+
+                        captureWithoutFetch(host)
+                            .then(function () {
+                                assert.isFalse(
+                                    decode.called,
+                                    'decode() must not run for a lazy image in a hidden shadow host'
+                                );
+                            })
+                            .then(function () {
+                                host.remove();
+                                done();
+                            })
+                            .catch(function (err) {
+                                host.remove();
+                                done(err);
+                            });
+                    });
+
+                    it('still calls decode() for a visible lazy image (#255)', function (done) {
+                        const root = document.createElement('div');
+                        const img = document.createElement('img');
+                        img.loading = 'lazy';
+                        img.alt = 'shown-lazy';
+                        img.src = 'http://127.0.0.1:9/shown-lazy.png';
+                        const decode = trackDecode(img);
+                        root.appendChild(img);
+                        document.body.appendChild(root);
+
+                        captureWithoutFetch(root)
+                            .then(function () {
+                                assert.isTrue(
+                                    decode.called,
+                                    'a visible lazy image that has not loaded must still decode'
+                                );
+                            })
+                            .then(function () {
+                                root.remove();
+                                done();
+                            })
+                            .catch(function (err) {
+                                root.remove();
+                                done(err);
+                            });
+                    });
+
+                    it('still calls decode() for an eager image with display:none (#255)', function (done) {
+                        const root = document.createElement('div');
+                        const img = document.createElement('img');
+                        img.loading = 'eager';
+                        img.alt = 'hidden-eager';
+                        img.style.display = 'none';
+                        img.src = 'http://127.0.0.1:9/hidden-eager.png';
+                        const decode = trackDecode(img);
+                        root.appendChild(img);
+                        document.body.appendChild(root);
+
+                        captureWithoutFetch(root)
+                            .then(function () {
+                                assert.isTrue(
+                                    decode.called,
+                                    'an eager hidden image still loads, so decode() must run'
+                                );
+                            })
+                            .then(function () {
+                                root.remove();
+                                done();
+                            })
+                            .catch(function (err) {
+                                root.remove();
+                                done(err);
+                            });
+                    });
                 });
                 describe('fonts', function () {
                     it('captures an icon-font glyph from a ::before pseudo-element (#149)', function (done) {
