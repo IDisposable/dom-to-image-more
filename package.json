@@ -7,7 +7,7 @@
     "devDependencies": {
         "@eslint/eslintrc": "^3.3.7",
         "@eslint/js": "^10.0.1",
-        "chai": "^4.5.0",
+        "chai": "^6.2.2",
         "eslint": "^10.11.0",
         "globals": "^17.12.0",
         "grunt": "^1.6.3",
@@ -16,17 +16,16 @@
         "grunt-contrib-uglify": "^5.2.2",
         "grunt-contrib-watch": "^1.1.0",
         "grunt-karma": "^4.0.2",
-        "js-yaml": "^4.2.0",
+        "js-yaml": "^5.4.2",
         "karma": "^6.4.4",
-        "karma-chai": "^0.1.0",
         "karma-chrome-launcher": "^3.2.0",
         "karma-firefox-launcher": "^2.1.3",
         "karma-mocha": "^2.0.1",
         "karma-mocha-reporter": "^2.2.5",
-        "mocha": "^11.7.6",
+        "mocha": "^12.0.2",
         "prettier": "^3.9.9",
         "semver": "^7.8.5",
-        "typescript": "^6.0.3"
+        "typescript": "^7.0.2"
     },
     "scripts": {
         "format": "eslint src --fix && prettier --write .",

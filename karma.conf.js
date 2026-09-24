@@ -64,7 +64,7 @@ module.exports = function (config) {
 
     config.set({
         basePath: '',
-        frameworks: ['mocha', 'chai'],
+        frameworks: ['mocha'],
         concurrency: 1,
 
         files: [
@@ -83,11 +83,16 @@ module.exports = function (config) {
                 included: false,
                 served: true,
             },
+            {
+                pattern: 'node_modules/chai/index.js',
+                included: false,
+                served: true,
+            },
 
             'tests/tesseract-4.0.2.min.js',
 
             'src/dom-to-image-more.js',
-            'spec/dom-to-image-more.spec.js',
+            { pattern: 'spec/dom-to-image-more.spec.js', type: 'module' },
         ],
 
         exclude: [],

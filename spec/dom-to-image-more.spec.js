@@ -1,8 +1,8 @@
 /* eslint-disable no-undef */
+import { assert } from '../node_modules/chai/index.js';
 (function (global) {
     'use strict';
 
-    const assert = global.chai.assert;
     const domtoimage = global.domtoimage;
     const Promise = global.Promise;
     const Tesseract = global.Tesseract;
@@ -4170,4 +4170,4 @@
             return blob;
         }
     });
-})(this);
+})(globalThis);
