@@ -44,6 +44,18 @@ surface (which is **not** public API — see the `impl` note under
   `getAndEncode` directly and want the placeholder.
 
 ## What's New
+
+### 3.11.0
+
+- **Embed only the used web fonts.** `@font-face` rules for families that the captured
+  node does not use are no longer embedded. This makes the output smaller and the render
+  faster on pages that load many fonts. The new [`filterFonts`](#filterfonts) option can
+  change the decision for each face; `filterFonts: () => true` embeds every face.
+- **SVG `url(#id)` references.** A `mask`, `clip-path`, `filter`, `marker-*` or gradient
+  `fill`/`stroke` that refers to an element outside the captured node (for example, a
+  shared `<defs>`) now renders. The target, and the elements it refers to, are copied into
+  the output. A same-document `url(#id)` is no longer fetched as an image.
+
 ### 3.10.4
 
 - Fix hang when an image that has a lazy load is not visible.
@@ -451,6 +463,32 @@ fewer cache misses, faster). Defaults to `'strict'`.
 Set to true to skip discovering and embedding `@font-face` web fonts into the output.
 Defaults to false (fonts are embedded).
 
+#### filterFonts
+
+Only the `@font-face` rules whose `font-family` the captured node uses are embedded. The
+used families come from the computed style of each node and its `::before`/`::after`, from
+styles set by `adjustClonedNode`, and from the `style` option. An unused face cannot
+change the output, so this makes the output smaller and the render faster on pages that
+load many fonts.
+
+`filterFonts` is a function that can change the decision for each face. It receives
+`{ family, style, weight, stretch, unicodeRange, src, used, rule }`. `family` is the first
+family name, lower case, without quotes, and `used` is the default decision. Return `true`
+to embed the face, `false` to skip it, or `undefined` to keep the default. Defaults to
+undefined.
+
+```javascript
+domtoimage.toPng(node, {
+    // Embed only the regular weight of the used faces.
+    filterFonts: (fontFace) => fontFace.used && fontFace.weight === '400',
+});
+
+domtoimage.toPng(node, {
+    // Embed every face on the page (the behavior before 3.11).
+    filterFonts: () => true,
+});
+```
+
 #### ignoreCSSRuleErrors
 
 Set to true to suppress the `console.error` that is logged when a stylesheet's CSS rules
@@ -580,6 +618,55 @@ domtoimage.toPng(node, {
 ```
 
 It runs before `corsImg` rewriting and the normal XHR, so a pre-fetch value bypasses both.
+
+##### Recipe: keep fetched resources between renders
+
+The library clears its resource cache at the end of each render. To fetch a font or image
+only once over many renders, keep your own cache and supply the value before the fetch. A
+promise returned before the fetch is the final answer for that URL (the normal fetch does
+not run), so the recipe fetches the resource itself:
+
+```javascript
+const resourceCache = new Map(); // url -> Promise<data: URL | undefined>
+
+function fetchAsDataUrl(url) {
+    return fetch(url)
+        .then((response) => {
+            if (!response.ok) throw new Error(`${response.status} ${url}`);
+            return response.blob();
+        })
+        .then(
+            (blob) =>
+                new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                })
+        );
+}
+
+function cachedResource(url) {
+    if (!resourceCache.has(url)) {
+        const pending = fetchAsDataUrl(url).catch(() => {
+            resourceCache.delete(url); // do not keep a failure; try again next render
+            return undefined; // this render drops the resource
+        });
+        resourceCache.set(url, pending);
+    }
+    return resourceCache.get(url);
+}
+
+domtoimage.toPng(node, {
+    requestInterceptor: (url, { status }) =>
+        status === undefined ? cachedResource(url) : undefined,
+});
+```
+
+`fetch` applies the normal CORS rules, and `corsImg`, `useCredentials` and `cacheBust` do
+not apply to it. Limit the cache by `type` (for example `FONT` only) or clear it when the
+resources can change.
+
 See
 [Resource handling: requestInterceptor vs corsImg vs imagePlaceholder](#resource-handling-requestinterceptor-vs-corsimg-vs-imageplaceholder)
 under _Things to watch out for_ for how these relate.
@@ -976,21 +1063,53 @@ only) → drop**, with [`onImageError`](#onimageerror) observing any failure alo
 
 ## Authors
 
-Marc Brooks, Anatolii Saienko (original dom-to-image), Paul Bakaus (original idea), Aidas
-Klimas (fixes), Edgardo Di Gesto (fixes), 樊冬 Fan Dong (fixes), Shrijan Tripathi (docs),
-SNDST00M (optimize), Joseph White (performance CSS), Phani Rithvij (test), David
-DOLCIMASCOLO (packaging), Zee (ZM) @zm-cttae (many major updates), Joshua Walsh
-@JoshuaWalsh (Firefox issues), Emre Coban @emrecoban (documentation), Nate Stuyvesant
-@nstuyvesant (fixes), King Wang @eachmawzw (CORS image proxy), TMM Schmit @tmmschmit
-(useCredentialsFilters), Aravind @codesculpture (fix overridden props), Shi Wenyu @cWenyu
-(shadow slot fix), David Burns @davidburns573 and Yujia Cheng @YujiaCheng1996 (font copy
-optional), Julien Dorra @juliendorra (documentation), Sean Zhang @SeanZhang-eaton (regex
-fixes), Ludovic Bouges @ludovic (style property filter), Roland Ma @RolandMa1986 (URL
-regex)", Kasim Tan @kasimtan, Matthias Zach @matthiaszach (iframe fixes), Kamran Ayub
-@kamranayub (filter URL option), Liu YuanYuan @mgenware, Davey Tran @DaveyTran, Nathan
-Fiscus @NathanFiscus (requestInterceptor), TechValidate @TechValidate (pseudo-element
-filter), Sizle @SizlePtyLtd, kbasten @kbasten, and Michal Bryxí @MichalBryxi (external
-stylesheet loading), Holly @h0lly (lazy image hang)
+- Marc Brooks @IDisposable
+- Anatolii Saienko @tsayen (original dom-to-image)
+- Paul Bakaus @pbakaus (original idea)
+- Aidas Klimas @AidasK (fixes)
+- Edgardo Di Gesto @eddydg (SVG class fix)
+- 樊冬 Fan Dong @CG-man (URL file extension fix)
+- Daniel Fischer (useCredentials)
+- Shrijan Tripathi @shrijan00003 (docs)
+- Tomas Rimkus @hakimio (onclone option)
+- Adrien Pyke @kufii (font mangling fix)
+- Quinn Blenkinsop @qw-in (SVG data URL encoding fix)
+- SNDST00M ~gone~ (optimize)
+- Mehmet YUCE @mfyuce (iframe support)
+- Muhammad Usman Anwar @muhammad-usman-anwar (getComputedStyle fix)
+- Julien @AnnoyingTechnology (iframe syntax fix)
+- Joseph White @joswhite (performance CSS)
+- Phani Rithvij @phanirithvij (test)
+- David DOLCIMASCOLO @ddolcimascolo (packaging)
+- FredTsang @FredZeng (httpTimeout default)
+- Nikita Staroseltsev @Nikitozz13 (resource cache)
+- Zee (ZM) @zm-cttae (many major updates)
+- Andoni Zubimendi @AndoniZubimendi (copyDefaultStyles option)
+- Yoshi Walsh @YoshiWalsh (Firefox issues)
+- Emre Coban @emrecoban (documentation)
+- Nate Stuyvesant @nstuyvesant (fixes)
+- King Wang @eachmawzw (CORS image proxy)
+- Michel Schmit @tmmschmit (useCredentialsFilters)
+- Deepak Aravind @codesculpture (fix overridden props)
+- Shi Wenyu @cWenyu (shadow slot fix)
+- David Burns @davidburns573 and Yujia Cheng @YujiaCheng1996 (font copy optional)
+- Julien Dorra @juliendorra (documentation)
+- Sean Zhang @SeanZhang-eaton (regex fixes)
+- Ludovic Bouges @ludovic (style property filter)
+- Roland Ma @RolandMa1986 (URL regex)
+- Kasim Tan @kasimtan (HTTP status 0 handling)
+- Sarah Gammon @SarahG-579462 (scrollbar flicker fix)
+- Matthias Zach @matthiaszach (iframe fixes)
+- Kamran Ayub @kamranayub (filter URL option)
+- Liu YuanYuan @mgenware (requestInterceptor)
+- Davey Tran @daveytran (ignoreCSSRuleErrors)
+- Nathan Fiscus @nathanfiscus (cross-origin cssRules check)
+- Ami Suzuki @suzukia of TechValidate @TechValidate (pseudo-element filter)
+- kbasten @kbasten of Sizle @SizlePtyLtd and Michal Bryxí @MichalBryxi (external
+  stylesheet loading)
+- Holly @h0lley (lazy image hang)
+- Manthan @Manthan224 of Playpower Labs @PlaypowerLabs (used web fonts only)
+- Steven @stevenw of Printfly @Printfly (SVG mask references)
 
 ## License
 

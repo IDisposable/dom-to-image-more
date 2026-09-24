@@ -49,6 +49,11 @@
         filterStyles: undefined,
         // Callback to filter urls to be downloaded and inlined in the output
         filterUrls: undefined,
+        // Callback to keep or drop each @font-face before it is embedded; receives
+        // { family, style, weight, stretch, unicodeRange, src, used, rule } and may
+        // return true (keep), false (drop), or undefined to keep the default,
+        // which is to embed only the faces the captured node uses (`used`)
+        filterFonts: undefined,
         // Callback to drop or adjust a ::before/::after pseudo-element; receives
         // (node, pseudo, style) and may return false to drop it, an object of CSS
         // property overrides to tweak it, or undefined/true to keep it as-is
@@ -207,6 +212,7 @@
      *         - @param {Object} data - post payload
      * @param {Function} options.adjustClonedNode - callback for adjustClonedNode eventing (to allow adjusting clone's properties)
      * @param {Function} options.filterStyles - Should return true if passed propertyName should be included in the output
+     * @param {Function} options.filterFonts - called for each @font-face with { family, style, weight, stretch, unicodeRange, src, used, rule }; return true to embed, false to skip, undefined to embed only when `used`
      * @param {Function} options.onImageError - called when a resource fails to fetch with { url, message, status, willUsePlaceholder }; observational only
      * @return {Promise} - A promise that is fulfilled with a SVG image data URL
      * */
@@ -217,6 +223,7 @@
         const restorations = [];
 
         svgRefsToInline = [];
+        usedFontFamilies = new Set();
 
         // Rendering needs a live DOM. Under SSR (Angular Universal, Next.js, …)
         // there is no document, so fail with a short, catchable error instead of a
@@ -237,7 +244,11 @@
                 return cloneNode(clonee, options, null, ownerWindow);
             })
             .then(injectSvgRefs)
-            .then(options.disableEmbedFonts ? Promise.resolve(node) : embedFonts)
+            .then(function (clone) {
+                return options.disableEmbedFonts
+                    ? clone
+                    : embedFonts(clone, options.style);
+            })
             .then(options.disableInlineImages ? Promise.resolve(node) : inlineImages)
             .then(applyOptions)
             .then(makeSvgDataUri)
@@ -314,11 +325,13 @@
             restoreWrappers();
             resetUrlCache();
             svgRefsToInline = [];
+            usedFontFamilies = new Set();
             removeSandbox();
         }
 
         // Prepend a hidden <svg><defs> holding any out-of-subtree elements that
-        // <use> nodes referenced (issue #215), so the standalone clone is
+        // a `<use href="#id">` (issue #215) or a `url(#id)` (mask, clip-path,
+        // filter, marker, gradient fill) referenced, so the standalone clone is
         // self-contained. Ids already present in the clone are skipped to avoid
         // duplicates. Returns the clone unchanged so the chain flows through.
         function injectSvgRefs(clone) {
@@ -751,6 +764,10 @@
     // the standalone output SVG is self-contained and `<use href="#id">` resolves
     // (issue #215). Keyed by id; reset per render.
     let svgRefsToInline = [];
+    // Normalized font-family names read from the source nodes (and their
+    // pseudo-elements) as they are cloned. embedFonts keeps only the @font-face
+    // rules for these families.
+    let usedFontFamilies = new Set();
 
     function cloneNode(node, options, parentComputedStyles, ownerWindow) {
         const filter = options.filter;
@@ -862,6 +879,7 @@
                 .then(sanitizeAttributes)
                 .then(preserveScroll)
                 .then(fixSvg)
+                .then(fixFragmentReferences)
                 .then(fixTableCaption)
                 .then(fixResponsiveImages)
                 .then(function () {
@@ -1014,6 +1032,9 @@
                 }
                 copyStyle(original, clone);
                 fixInheritedVisibility();
+                collectFontFamilies(
+                    getComputedStyle(original).getPropertyValue('font-family')
+                );
 
                 // `visibility` is inherited, but the style copy pins each element's
                 // *computed* value. So an element that is hidden only because an
@@ -1129,6 +1150,11 @@
                         }
                     }
 
+                    collectFontFamilies(style.getPropertyValue('font-family'));
+                    if (overrides && overrides['font-family']) {
+                        collectFontFamilies(overrides['font-family']);
+                    }
+
                     const currentClass = clone.getAttribute('class') || '';
                     clone.setAttribute('class', `${currentClass} ${cloneClassName}`);
 
@@ -1204,8 +1230,45 @@
                     }
 
                     if (util.isSVGUseElement(clone)) {
-                        collectUseReference(original);
+                        collectHrefReference(original, original);
                     }
+                }
+            }
+
+            // A `url(#id)` in mask, clip-path, filter, marker or a gradient fill
+            // points into the page. The copied computed style can serialize it as
+            // an absolute page URL, which does not resolve inside the standalone
+            // SVG. Write it back as `url("#id")` and collect the target, which is
+            // often in a shared <defs> outside the captured node.
+            function fixFragmentReferences() {
+                if (clone.style) {
+                    FRAGMENT_REF_PROPERTIES.forEach(function (name) {
+                        const value = clone.style.getPropertyValue(name);
+                        if (!value || value.indexOf('url(') === -1) {
+                            return;
+                        }
+                        const rewritten = util.rewriteFragmentUrls(value, function (id) {
+                            collectFragmentReference(original, id);
+                        });
+                        if (rewritten !== value) {
+                            clone.style.setProperty(
+                                name,
+                                rewritten,
+                                clone.style.getPropertyPriority(name)
+                            );
+                        }
+                    });
+                }
+
+                if (util.isSVGElement(original)) {
+                    FRAGMENT_REF_ATTRIBUTES.forEach(function (name) {
+                        const value = original.getAttribute(name);
+                        if (value) {
+                            util.rewriteFragmentUrls(value, function (id) {
+                                collectFragmentReference(original, id);
+                            });
+                        }
+                    });
                 }
             }
 
@@ -1239,38 +1302,94 @@
                 }
                 return false;
             }
-
-            // A <use href="#id"> often points at a <symbol>/element defined elsewhere
-            // on the page, OUTSIDE the node being rendered — so that target is never
-            // cloned and the <use> renders nothing. Collect a deep copy of the target
-            // here; it's injected into the root clone later so the reference resolves
-            // in the standalone output. (Same-document fragment refs only; external
-            // sprite files `sprite.svg#id` are left untouched.)
-            function collectUseReference(originalUse) {
-                const href =
-                    originalUse.getAttribute('href') ||
-                    originalUse.getAttributeNS(XLINK_NS, 'href') ||
-                    originalUse.getAttribute('xlink:href');
-                if (!href || href.charAt(0) !== '#') {
-                    return;
-                }
-                const id = href.slice(1);
-                if (svgRefsToInline.some((ref) => ref.id === id)) {
-                    return; // already collected
-                }
-                const referenced = originalUse.ownerDocument.getElementById(id);
-                if (!referenced) {
-                    return;
-                }
-                const referencedClone = referenced.cloneNode(true);
-                referencedClone.setAttribute('xmlns', SVG_NS);
-                svgRefsToInline.push({ id: id, node: referencedClone });
-            }
         }
     }
 
-    function embedFonts(node) {
-        return fontFaces.resolveAll().then(function (cssText) {
+    // Properties and SVG presentation attributes that can hold a `url(#id)`
+    // reference to another element in the same document.
+    const FRAGMENT_REF_PROPERTIES = [
+        'clip-path',
+        'mask',
+        'mask-image',
+        '-webkit-mask',
+        '-webkit-mask-image',
+        'filter',
+        'fill',
+        'stroke',
+        'marker-start',
+        'marker-mid',
+        'marker-end',
+    ];
+    const FRAGMENT_REF_ATTRIBUTES = [
+        'clip-path',
+        'mask',
+        'filter',
+        'fill',
+        'stroke',
+        'marker-start',
+        'marker-mid',
+        'marker-end',
+    ];
+
+    // A <use href="#id"> often points at a <symbol>/element defined elsewhere
+    // on the page, OUTSIDE the node being rendered — so that target is never
+    // cloned and the <use> renders nothing. (Same-document fragment refs only;
+    // external sprite files `sprite.svg#id` are left untouched.)
+    function collectHrefReference(element, scope) {
+        const href =
+            element.getAttribute('href') ||
+            element.getAttributeNS(XLINK_NS, 'href') ||
+            element.getAttribute('xlink:href');
+        if (href && href.charAt(0) === '#' && href.length > 1) {
+            collectFragmentReference(scope, href.slice(1));
+        }
+    }
+
+    // Collect a deep copy of the element with this id. injectSvgRefs adds it to
+    // the root clone so the reference resolves in the standalone output. The
+    // copy is scanned for its own references (a mask that uses a gradient, a
+    // gradient that inherits another through href). `scope` is a source node;
+    // its root (document or shadow root) is where the id is looked up.
+    function collectFragmentReference(scope, id) {
+        if (svgRefsToInline.some((ref) => ref.id === id)) {
+            return; // already collected
+        }
+        const root = typeof scope.getRootNode === 'function' ? scope.getRootNode() : null;
+        const referenced =
+            (root && typeof root.getElementById === 'function'
+                ? root.getElementById(id)
+                : null) || scope.ownerDocument.getElementById(id);
+        if (!referenced) {
+            return;
+        }
+        const referencedClone = referenced.cloneNode(true);
+        referencedClone.setAttribute('xmlns', SVG_NS);
+        svgRefsToInline.push({ id: id, node: referencedClone });
+
+        [referenced]
+            .concat(util.asArray(referenced.querySelectorAll('*')))
+            .forEach(function (element) {
+                collectHrefReference(element, scope);
+                FRAGMENT_REF_ATTRIBUTES.concat(['style']).forEach(function (name) {
+                    const value = element.getAttribute(name);
+                    if (value) {
+                        util.rewriteFragmentUrls(value, function (nestedId) {
+                            collectFragmentReference(scope, nestedId);
+                        });
+                    }
+                });
+            });
+    }
+
+    // Add the names in a CSS font-family list to usedFontFamilies.
+    function collectFontFamilies(value) {
+        util.parseFontFamilies(value).forEach(function (name) {
+            usedFontFamilies.add(name);
+        });
+    }
+
+    function embedFonts(node, style) {
+        return fontFaces.resolveAll(node, style).then(function (cssText) {
             if (cssText !== '') {
                 const styleNode = document.createElement('style');
                 node.appendChild(styleNode);
@@ -1294,6 +1413,9 @@
             isDataUrl: isDataUrl,
             canvasToBlob: canvasToBlob,
             resolveUrl: resolveUrl,
+            getSameDocumentFragmentId: getSameDocumentFragmentId,
+            rewriteFragmentUrls: rewriteFragmentUrls,
+            parseFontFamilies: parseFontFamilies,
             getAndEncode: getAndEncode,
             getResourceText: getResourceText,
             uid: uid,
@@ -1483,6 +1605,88 @@
             base.href = baseUrl;
             a.href = url;
             return a.href;
+        }
+
+        // The id of a same-document reference: `#id`, or the page URL with a
+        // fragment (the form a computed style can serialize `url(#id)` to).
+        // Returns null for anything else. Such a URL is never fetchable.
+        function getSameDocumentFragmentId(url) {
+            const hashIndex = url.indexOf('#');
+            if (hashIndex === -1 || hashIndex === url.length - 1) {
+                return null;
+            }
+            if (hashIndex > 0) {
+                const withoutHash = url.slice(0, hashIndex);
+                if (
+                    withoutHash !== stripHash(document.URL) &&
+                    withoutHash !== stripHash(document.baseURI)
+                ) {
+                    return null;
+                }
+            }
+            const id = url.slice(hashIndex + 1);
+            try {
+                return decodeURIComponent(id);
+            } catch (_e) {
+                return id;
+            }
+
+            function stripHash(value) {
+                const index = (value || '').indexOf('#');
+                return index === -1 ? value : value.slice(0, index);
+            }
+        }
+
+        // Replace each same-document `url(...)` in a CSS value with `url("#id")`
+        // and call onId(id) for it. Other urls are left as they are.
+        function rewriteFragmentUrls(value, onId) {
+            const pattern = /url\(\s*(["']?)((?:\\.|[^\\)])+)\1\s*\)/g;
+            let result = '';
+            let last = 0;
+            let match;
+            while ((match = pattern.exec(value)) !== null) {
+                const id = getSameDocumentFragmentId(match[2].replace(/\\(.)/g, '$1'));
+                if (id !== null) {
+                    onId(id);
+                    result += value.slice(last, match.index);
+                    result += `url("#${id.replace(/["\\]/g, '\\$&')}")`;
+                    last = pattern.lastIndex;
+                }
+            }
+            return result + value.slice(last);
+        }
+
+        // Split a CSS font-family list into lower-case names without quotes.
+        function parseFontFamilies(value) {
+            const names = [];
+            let current = '';
+            let quote = '';
+            for (let i = 0; i < (value || '').length; i += 1) {
+                const ch = value.charAt(i);
+                if (ch === '\\' && i + 1 < value.length) {
+                    current += value.charAt(i + 1);
+                    i += 1;
+                } else if (quote) {
+                    if (ch === quote) {
+                        quote = '';
+                    } else {
+                        current += ch;
+                    }
+                } else if (ch === '"' || ch === "'") {
+                    quote = ch;
+                } else if (ch === ',') {
+                    names.push(current);
+                    current = '';
+                } else {
+                    current += ch;
+                }
+            }
+            names.push(current);
+            return names
+                .map(function (name) {
+                    return name.trim().replace(/\s+/g, ' ').toLowerCase();
+                })
+                .filter(Boolean);
         }
 
         function uid() {
@@ -1996,8 +2200,14 @@
             while ((match = URL_REGEX.exec(string)) !== null) {
                 result.push(match[2]);
             }
+            // A same-document ref (`url(#m)` on a mask or clip-path) is not a
+            // resource. Fetching it would download the page itself.
             return result.filter(function (url) {
-                return !util.isDataUrl(url);
+                return (
+                    !util.isDataUrl(url) &&
+                    url.charAt(0) !== '#' &&
+                    util.getSameDocumentFragmentId(url) === null
+                );
             });
         }
 
@@ -2056,8 +2266,13 @@
             },
         };
 
-        function resolveAll() {
+        // With a clone, embed only the faces it uses (see selectUsedFonts).
+        // Without one, embed every face on the page.
+        function resolveAll(clone, style) {
             return readAll()
+                .then(function (webFonts) {
+                    return clone ? selectUsedFonts(webFonts, clone, style) : webFonts;
+                })
                 .then(function (webFonts) {
                     return Promise.all(
                         webFonts.map(function (webFont) {
@@ -2068,6 +2283,51 @@
                 .then(function (cssStrings) {
                     return cssStrings.join('\n');
                 });
+        }
+
+        // Keep a face when its family is used by the captured node: in the
+        // source computed styles (collected while cloning), in the clone's own
+        // styles (adjustClonedNode can change them), or in options.style
+        // (applied to the root after this step). An unused face cannot change
+        // the output. options.filterFonts can override each decision.
+        function selectUsedFonts(webFonts, clone, style) {
+            const options = domtoimage.impl.options;
+            const used = new Set(usedFontFamilies);
+            const add = function (value) {
+                util.parseFontFamilies(value).forEach(function (name) {
+                    used.add(name);
+                });
+            };
+
+            [clone]
+                .concat(util.asArray(clone.querySelectorAll('*')))
+                .forEach(function (element) {
+                    if (element.style) {
+                        add(element.style.getPropertyValue('font-family'));
+                    }
+                    if (util.isHTMLStyleElement(element)) {
+                        const pattern = /font-family\s*:\s*([^;}]+)/gi;
+                        let match;
+                        while ((match = pattern.exec(element.textContent)) !== null) {
+                            add(match[1].replace(/\s*!important\s*$/i, ''));
+                        }
+                    }
+                });
+            if (style) {
+                add(style.fontFamily || style['font-family']);
+            }
+
+            return webFonts.filter(function (webFont) {
+                const fontFace = webFont.descriptor();
+                fontFace.used = used.has(fontFace.family);
+                if (typeof options.filterFonts === 'function') {
+                    const decision = options.filterFonts(fontFace);
+                    if (decision === true || decision === false) {
+                        return decision;
+                    }
+                }
+                return fontFace.used;
+            });
         }
 
         function readAll() {
@@ -2222,6 +2482,21 @@
                     },
                     src: function () {
                         return webFontRule.style.getPropertyValue('src');
+                    },
+                    descriptor: function () {
+                        const style = webFontRule.style;
+                        return {
+                            family:
+                                util.parseFontFamilies(
+                                    style.getPropertyValue('font-family')
+                                )[0] || '',
+                            style: style.getPropertyValue('font-style'),
+                            weight: style.getPropertyValue('font-weight'),
+                            stretch: style.getPropertyValue('font-stretch'),
+                            unicodeRange: style.getPropertyValue('unicode-range'),
+                            src: style.getPropertyValue('src'),
+                            rule: webFontRule,
+                        };
                     },
                 };
             }

@@ -28,6 +28,26 @@ declare namespace domToImage {
         willUsePlaceholder: boolean;
     }
 
+    /** Details of one `@font-face` rule, passed to `filterFonts`. */
+    interface FontFaceInfo {
+        /** First family name, lower case, without quotes. */
+        family: string;
+        /** The `font-style` descriptor (empty when not set). */
+        style: string;
+        /** The `font-weight` descriptor (empty when not set). */
+        weight: string;
+        /** The `font-stretch` descriptor (empty when not set). */
+        stretch: string;
+        /** The `unicode-range` descriptor (empty when not set). */
+        unicodeRange: string;
+        /** The `src` descriptor. */
+        src: string;
+        /** `true` when the captured node uses this family. */
+        used: boolean;
+        /** The source rule. */
+        rule: CSSFontFaceRule;
+    }
+
     /**
      * A console-like sink for the library's own diagnostics (see `Options.logger`).
      * Methods are optional: a missing one drops that level, so `{}` silences and
@@ -62,6 +82,13 @@ declare namespace domToImage {
          * the output.
          */
         filterStyles?: (node: Node, propertyName: string) => boolean;
+        /**
+         * Keep or drop each `@font-face` before it is embedded. By default only
+         * the faces whose family the captured node uses are embedded (`used`).
+         * Return `true` to embed, `false` to skip, or `undefined` to keep the
+         * default. `() => true` embeds every face on the page.
+         */
+        filterFonts?: (fontFace: FontFaceInfo) => boolean | void;
         /**
          * Drop or adjust a `::before`/`::after` pseudo-element as it is recreated in
          * the clone. Receives the source node, which pseudo (`':before'` or

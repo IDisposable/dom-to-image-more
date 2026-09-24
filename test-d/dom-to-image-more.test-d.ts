@@ -6,7 +6,12 @@
 // error, or tsc fails (reporting an "unused" expect-error) — so this file fails
 // loudly if the bundled .d.ts ever drifts.
 
-import domtoimage, { Options, ImageErrorInfo, ResourceType } from '../dom-to-image-more';
+import domtoimage, {
+    Options,
+    ImageErrorInfo,
+    ResourceType,
+    FontFaceInfo,
+} from '../dom-to-image-more';
 
 declare const node: HTMLElement;
 
@@ -46,6 +51,7 @@ const opts: Options = {
     imagePlaceholder: 'data:,',
     filter: (n: Node) => n.nodeType === 1,
     filterStyles: (n: Node, p: string) => !p.startsWith('--'),
+    filterFonts: (f: FontFaceInfo) => (f.family === 'icons' ? true : undefined),
     adjustPseudoElement: (
         _n: Node,
         pseudo: ':before' | ':after',

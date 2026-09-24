@@ -1,5 +1,6 @@
 /* eslint-disable no-undef */
 import { assert } from '../node_modules/chai/index.js';
+
 (function (global) {
     'use strict';
 
@@ -94,6 +95,111 @@ import { assert } from '../node_modules/chai/index.js';
                                     decoded,
                                     'id="starpath"',
                                     "the symbol's contents must be injected"
+                                );
+                            })
+                            .then(done)
+                            .catch(done);
+                    });
+
+                    // A <mask> in a shared <defs> outside the captured node. The mask
+                    // shows only the left half of the rect, through a gradient that is
+                    // also outside the node (a nested reference).
+                    function addOutsideMaskDefs() {
+                        document
+                            .querySelector('#test-root')
+                            .insertAdjacentHTML(
+                                'afterbegin',
+                                '<svg width="0" height="0" style="position:absolute" xmlns="http://www.w3.org/2000/svg"><defs>' +
+                                    '<linearGradient id="mgrad"><stop offset="0" stop-color="white"></stop></linearGradient>' +
+                                    '<mask id="halfmask" maskUnits="userSpaceOnUse" x="0" y="0" width="40" height="20">' +
+                                    '<rect x="0" y="0" width="20" height="20" fill="url(#mgrad)"></rect>' +
+                                    '</mask></defs></svg>'
+                            );
+                        domNode().innerHTML =
+                            '<div id="maskbox" style="width:40px;height:20px;line-height:0">' +
+                            '<svg width="40" height="20" xmlns="http://www.w3.org/2000/svg">' +
+                            '<rect id="maskedrect" width="40" height="20" fill="rgb(255,0,0)" mask="url(#halfmask)"></rect>' +
+                            '</svg></div>';
+                    }
+
+                    it('injects an out-of-subtree <mask> referenced by url(#id)', function (done) {
+                        const requested = [];
+                        loadTestPage()
+                            .then(function () {
+                                addOutsideMaskDefs();
+                                return renderToSvg(domNode(), {
+                                    requestInterceptor: function (url) {
+                                        requested.push(url);
+                                        return undefined;
+                                    },
+                                });
+                            })
+                            .then(function (svg) {
+                                const decoded = decodeURIComponent(svg);
+                                assert.include(
+                                    decoded,
+                                    'id="halfmask"',
+                                    'the referenced <mask> must be injected'
+                                );
+                                assert.include(
+                                    decoded,
+                                    'id="mgrad"',
+                                    'the gradient the mask uses must be injected too'
+                                );
+                                assert.notInclude(
+                                    decoded,
+                                    'data:text/html',
+                                    'the page must not be fetched as the mask'
+                                );
+                                const rect = (decoded.match(
+                                    /<rect id="maskedrect"[^>]*>/
+                                ) || [])[0];
+                                assert.isString(
+                                    rect,
+                                    'masked rect should be in the output'
+                                );
+                                assert.notMatch(
+                                    rect,
+                                    /url\(\s*["']?https?:/,
+                                    'the mask reference must stay same-document'
+                                );
+                                requested.forEach(function (url) {
+                                    assert.notInclude(
+                                        url,
+                                        '#',
+                                        'no same-document reference may be fetched'
+                                    );
+                                });
+                            })
+                            .then(done)
+                            .catch(done);
+                    });
+
+                    it('renders an out-of-subtree <mask> referenced by url(#id)', function (done) {
+                        loadTestPage()
+                            .then(function () {
+                                addOutsideMaskDefs();
+                                return domtoimage.toPixelData(
+                                    document.getElementById('maskbox')
+                                );
+                            })
+                            .then(function (pixels) {
+                                const shown = (10 * 40 + 5) * 4;
+                                const hidden = (10 * 40 + 35) * 4;
+                                assert.isAbove(
+                                    pixels[shown],
+                                    200,
+                                    'the unmasked left half should be red'
+                                );
+                                assert.isAbove(
+                                    pixels[shown + 3],
+                                    200,
+                                    'the unmasked left half should be opaque'
+                                );
+                                assert.isBelow(
+                                    pixels[hidden + 3],
+                                    50,
+                                    'the masked right half should be transparent'
                                 );
                             })
                             .then(done)
@@ -1033,6 +1139,95 @@ import { assert } from '../node_modules/chai/index.js';
                                 cleanup();
                                 done(e);
                             });
+                    });
+
+                    // Two faces on the page; the node uses only UsedFace in its text
+                    // and IconFace in a ::before. UnusedFace must not be embedded.
+                    function renderWithFaces(options) {
+                        const font =
+                            '/base/tests/fontawesome/webfonts/fa-solid-900.woff2';
+                        const style = document.createElement('style');
+                        style.id = 's-used-fonts';
+                        style.textContent =
+                            `@font-face { font-family: 'UsedFace'; src: url('${font}') format('woff2'); }` +
+                            `@font-face { font-family: "IconFace"; src: url('${font}?icon') format('woff2'); }` +
+                            `@font-face { font-family: UnusedFace; src: url('${font}?unused') format('woff2'); }` +
+                            '#uf { font-family: "UsedFace", serif; }' +
+                            '#uf::before { content: "x"; font-family: IconFace; }';
+                        document.head.appendChild(style);
+                        return loadTestPage()
+                            .then(function () {
+                                domNode().innerHTML = '<span id="uf">text</span>';
+                                return renderToSvg(domNode(), options);
+                            })
+                            .finally(function () {
+                                style.remove();
+                            });
+                    }
+
+                    it('embeds only the @font-face families the node uses', function (done) {
+                        this.timeout(15000);
+                        renderWithFaces()
+                            .then(function (svg) {
+                                const decoded = decodeURIComponent(svg);
+                                assert.match(
+                                    decoded,
+                                    /@font-face\s*\{[^}]*UsedFace/,
+                                    'the text font must be embedded'
+                                );
+                                assert.match(
+                                    decoded,
+                                    /@font-face\s*\{[^}]*IconFace/,
+                                    'the ::before font must be embedded'
+                                );
+                                assert.notInclude(
+                                    decoded,
+                                    'UnusedFace',
+                                    'an unused face must not be embedded'
+                                );
+                            })
+                            .then(done)
+                            .catch(done);
+                    });
+
+                    it('filterFonts can override the used-font selection', function (done) {
+                        this.timeout(15000);
+                        const seen = {};
+                        renderWithFaces({
+                            filterFonts: function (fontFace) {
+                                seen[fontFace.family] = fontFace.used;
+                                if (fontFace.family === 'unusedface') {
+                                    return true;
+                                }
+                                if (fontFace.family === 'iconface') {
+                                    return false;
+                                }
+                                return undefined;
+                            },
+                        })
+                            .then(function (svg) {
+                                const decoded = decodeURIComponent(svg);
+                                assert.strictEqual(seen.usedface, true);
+                                assert.strictEqual(seen.iconface, true);
+                                assert.strictEqual(seen.unusedface, false);
+                                assert.match(
+                                    decoded,
+                                    /@font-face\s*\{[^}]*UsedFace/,
+                                    'undefined keeps the default (used)'
+                                );
+                                assert.match(
+                                    decoded,
+                                    /@font-face\s*\{[^}]*UnusedFace/,
+                                    'true embeds an unused face'
+                                );
+                                assert.notMatch(
+                                    decoded,
+                                    /@font-face\s*\{[^}]*IconFace/,
+                                    'false drops a used face'
+                                );
+                            })
+                            .then(done)
+                            .catch(done);
                     });
 
                     it('preserves an overridden font-size on headings (#227)', function (done) {
@@ -2867,6 +3062,46 @@ import { assert } from '../node_modules/chai/index.js';
                 it('should ignore data urls', function () {
                     const parse = domtoimage.impl.inliner.impl.readUrls;
                     assert.deepEqual(parse('url(foo.com), url(data:AAA)'), ['foo.com']);
+                });
+
+                it('should ignore same-document fragment urls', function () {
+                    // `url(#m)` on a mask/clip-path is an element reference, not a
+                    // resource. Fetching it would download the page itself.
+                    const parse = domtoimage.impl.inliner.impl.readUrls;
+                    const page = document.URL.split('#')[0];
+                    assert.deepEqual(
+                        parse(`url(#m), url("${page}#m"), url(icon.svg#m)`),
+                        ['icon.svg#m']
+                    );
+                });
+
+                it('should rewrite same-document fragment urls', function () {
+                    const rewrite = domtoimage.impl.util.rewriteFragmentUrls;
+                    const page = document.URL.split('#')[0];
+                    const ids = [];
+                    const collect = function (id) {
+                        ids.push(id);
+                    };
+                    assert.equal(
+                        rewrite(`url("${page}#m1") alpha`, collect),
+                        'url("#m1") alpha'
+                    );
+                    assert.equal(rewrite("url('#m2')", collect), 'url("#m2")');
+                    assert.equal(
+                        rewrite('url(icon.svg#m3)', collect),
+                        'url(icon.svg#m3)'
+                    );
+                    assert.deepEqual(ids, ['m1', 'm2']);
+                });
+
+                it('should parse font-family lists', function () {
+                    const parse = domtoimage.impl.util.parseFontFamilies;
+                    assert.deepEqual(
+                        parse('"Font Awesome 6 Free", \'My, Font\', Arial ,  sans-serif'),
+                        ['font awesome 6 free', 'my, font', 'arial', 'sans-serif']
+                    );
+                    assert.deepEqual(parse(''), []);
+                    assert.deepEqual(parse(undefined), []);
                 });
 
                 it('should build a decent escaped regex urls', function () {
